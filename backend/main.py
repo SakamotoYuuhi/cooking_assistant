@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pathlib import Path
-from .routers import chat
+from .routers import chat, agent
 
 # プロジェクトルートの .env を明示的に読み込む
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(agent.router)
 
 
 @app.get("/")
