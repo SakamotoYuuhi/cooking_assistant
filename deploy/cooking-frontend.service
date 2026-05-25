@@ -1,0 +1,23 @@
+[Unit]
+Description=AI料理アシスタント Streamlit フロントエンド
+After=network.target cooking-backend.service
+
+[Service]
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/cooking_assistant
+EnvironmentFile=/opt/cooking_assistant/.env
+ExecStart=/opt/cooking_assistant/venv/bin/streamlit run frontend/app.py \
+    --server.port=8501 \
+    --server.address=127.0.0.1 \
+    --server.headless=true \
+    --server.enableCORS=false \
+    --server.enableXsrfProtection=false
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cooking-frontend
+
+[Install]
+WantedBy=multi-user.target

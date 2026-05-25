@@ -1,0 +1,18 @@
+[Unit]
+Description=AI料理アシスタント FastAPI バックエンド
+After=network.target
+
+[Service]
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/cooking_assistant
+EnvironmentFile=/opt/cooking_assistant/.env
+ExecStart=/opt/cooking_assistant/venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cooking-backend
+
+[Install]
+WantedBy=multi-user.target

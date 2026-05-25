@@ -1,0 +1,14 @@
+# =============================================================================
+# デプロイ設定ファイル（テンプレート）
+# 使い方: cp deploy/config.sh.example deploy/config.sh
+#         deploy/config.sh を編集して実際の値を設定する
+# =============================================================================
+
+# EC2のパブリックIPアドレス or ドメイン名
+EC2_HOST="XX.XX.XX.XX"
+
+# SSHキーファイルのパス（AWSコンソールでダウンロードしたもの）
+KEY_PATH="~/.ssh/your-key.pem"
+
+# EC2のSSHユーザー名（Amazon Linux: ec2-user / Ubuntu: ubuntu）
+EC2_USER="ec2-user"
