@@ -1,5 +1,6 @@
 # 認証情報
 .env
+deploy/config.sh
 
 # FAISSインデックス（build_index.pyで再生成可能なため除外）
 data/index/
