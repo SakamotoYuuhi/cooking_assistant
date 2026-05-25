@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Any
 
 
 class Message(BaseModel):
@@ -20,3 +20,15 @@ class ChatResponse(BaseModel):
 
 class ClearRequest(BaseModel):
     session_id: str
+
+
+class AgentRequest(BaseModel):
+    session_id: str
+    message: str
+
+
+class AgentResponse(BaseModel):
+    session_id: str
+    reply: str
+    tools_used: List[dict]  # 使用されたツールのログ
+    history: List[Message]
