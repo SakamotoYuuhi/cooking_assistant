@@ -5,6 +5,9 @@
 data/index/
 data/business_index/
 
+# S3キャッシュ（build_index.py実行時の一時ダウンロード先）
+data/s3_recipes/
+
 # Python
 __pycache__/
 *.pyc
