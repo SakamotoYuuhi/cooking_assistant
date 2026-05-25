@@ -9,8 +9,8 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 BACKEND_URL = "http://localhost:8000"
 
 st.set_page_config(
-    page_title="AI料理アシスタント",
-    page_icon="🍳",
+    page_title="AI アシスタント",
+    page_icon="🤖",
     layout="wide",
 )
 
@@ -21,21 +21,27 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_messages" not in st.session_state:
     st.session_state.agent_messages = []
+if "business_messages" not in st.session_state:
+    st.session_state.business_messages = []
 
 # ---- サイドバー ----
 with st.sidebar:
-    st.title("🍳 AI料理アシスタント")
+    st.title("🤖 AI アシスタント")
     st.markdown("---")
 
     mode = st.radio(
         "モードを選択",
-        ["💬 チャットモード（RAG）", "🤖 エージェントモード"],
-        help="チャット: RAGでレシピ検索して回答\nエージェント: 複数ツールを自律的に組み合わせて回答",
+        ["💬 料理チャット（RAG）", "🍳 料理エージェント", "🏢 社内ナレッジ検索"],
+        help=(
+            "料理チャット: RAGでレシピ検索して回答\n"
+            "料理エージェント: 複数ツールを自律的に組み合わせて回答\n"
+            "社内ナレッジ: FAQ・手順書・障害対応マニュアルを検索"
+        ),
     )
 
     st.markdown("---")
 
-    if mode == "💬 チャットモード（RAG）":
+    if mode == "💬 料理チャット（RAG）":
         st.markdown("### 例文")
         examples = [
             "鶏肉・玉ねぎ・にんじんがあります",
@@ -52,7 +58,7 @@ with st.sidebar:
             st.session_state.messages = []
             st.rerun()
 
-    else:
+    elif mode == "🍳 料理エージェント":
         st.markdown("### エージェント例文")
         agent_examples = [
             "鶏肉と豆腐がある。今日の夕食を提案して",
@@ -69,12 +75,31 @@ with st.sidebar:
             st.session_state.agent_messages = []
             st.rerun()
 
+    else:
+        st.markdown("### 社内ナレッジ例文")
+        business_examples = [
+            "有給休暇の申請方法を教えて",
+            "VPNの接続手順は？",
+            "本番デプロイの手順を教えて",
+            "P1障害が発生した。最初にやることは？",
+            "経費精算の締め日と支払い日は？",
+            "CIが失敗した場合の対処法は？",
+        ]
+        for ex in business_examples:
+            if st.button(ex, use_container_width=True, key=f"biz_{ex}"):
+                st.session_state.pending_business_message = ex
+
+        if st.button("社内ナレッジ履歴をリセット", use_container_width=True, type="secondary"):
+            requests.post(f"{BACKEND_URL}/business/clear", json={"session_id": st.session_state.session_id})
+            st.session_state.business_messages = []
+            st.rerun()
+
     st.markdown("---")
     st.caption(f"セッションID: `{st.session_state.session_id[:8]}...`")
 
 
 # ---- チャットモード ----
-if mode == "💬 チャットモード（RAG）":
+if mode == "💬 料理チャット（RAG）":
     st.title("💬 チャットモード（RAG）")
     st.caption("食材を伝えると、レシピ集を参照して献立・レシピを提案します")
 
@@ -110,8 +135,8 @@ if mode == "💬 チャットモード（RAG）":
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
-# ---- エージェントモード ----
-else:
+# ---- 料理エージェントモード ----
+elif mode == "🍳 料理エージェント":
     st.title("🤖 エージェントモード")
     st.caption("複数のツール（レシピ検索・献立作成・買い物リスト・栄養分析）を自律的に組み合わせて回答します")
 
@@ -160,6 +185,68 @@ else:
                         st.json(t["input"])
 
         st.session_state.agent_messages.append({
+            "role": "assistant",
+            "content": reply,
+            "tools_used": tools_used,
+        })
+
+# ---- 社内ナレッジ検索モード ----
+else:
+    st.title("🏢 社内ナレッジ検索")
+    st.caption("FAQ・手順書・障害対応マニュアルから回答します。料理エージェントと全く同じ構造で、ドメインだけ異なります。")
+
+    st.info(
+        "**フェーズ4の本質**: このモードは料理エージェント（フェーズ3）と同じRAG＋エージェント構造です。\n\n"
+        "- レシピ → 業務文書 / search_recipe → search_knowledge_base\n"
+        "同じコードベースで社内FAQシステムが実現できます。",
+        icon="💡",
+    )
+
+    for msg in st.session_state.business_messages:
+        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🏢"):
+            st.markdown(msg["content"])
+            if msg.get("tools_used"):
+                with st.expander(f"🔍 検索したドキュメント（{len(msg['tools_used'])}件）"):
+                    for t in msg["tools_used"]:
+                        st.markdown(f"**{t['tool']}**")
+                        st.json(t["input"])
+
+    pending_biz = st.session_state.pop("pending_business_message", None)
+    biz_input = st.chat_input("社内のことを何でも聞いてください（例: 有給の申請方法、デプロイ手順）")
+    biz_message = biz_input or pending_biz
+
+    if biz_message:
+        st.session_state.business_messages.append({"role": "user", "content": biz_message})
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(biz_message)
+
+        with st.chat_message("assistant", avatar="🏢"):
+            with st.spinner("社内ナレッジを検索中..."):
+                try:
+                    response = requests.post(
+                        f"{BACKEND_URL}/business",
+                        json={"session_id": st.session_state.session_id, "message": biz_message},
+                        timeout=60,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    reply = data["reply"]
+                    tools_used = data.get("tools_used", [])
+                except requests.exceptions.ConnectionError:
+                    reply = "バックエンドに接続できません。"
+                    tools_used = []
+                except Exception as e:
+                    reply = f"エラー: {str(e)}"
+                    tools_used = []
+
+            st.markdown(reply)
+            if tools_used:
+                with st.expander(f"🔍 検索したドキュメント（{len(tools_used)}件）"):
+                    for t in tools_used:
+                        st.markdown(f"**{t['tool']}**")
+                        st.json(t["input"])
+
+        st.session_state.business_messages.append({
             "role": "assistant",
             "content": reply,
             "tools_used": tools_used,

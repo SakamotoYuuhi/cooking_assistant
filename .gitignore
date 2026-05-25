@@ -3,6 +3,7 @@
 
 # FAISSインデックス（build_index.pyで再生成可能なため除外）
 data/index/
+data/business_index/
 
 # Python
 __pycache__/
