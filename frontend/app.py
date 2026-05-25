@@ -11,16 +11,110 @@ BACKEND_URL = "http://localhost:8000"
 st.set_page_config(
     page_title="AI料理アシスタント",
     page_icon="🍳",
-    layout="wide",
+    layout="wide",                    # PC: wide レイアウト（変更なし）
+    initial_sidebar_state="auto",     # PC: サイドバー表示 / モバイル: 自動折りたたみ
 )
 
-# セッションIDの初期化
+# ==============================================================================
+# レスポンシブCSS
+#   PC   (min-width: 769px) : 従来どおり wide + サイドバー
+#   Mobile (max-width: 768px): centered 幅・縦積みカラム・大きいタップ領域
+# ==============================================================================
+st.markdown("""
+<style>
+/* =========================================================
+   共通
+   ========================================================= */
+/* iOSでフォーカス時に自動ズームさせない最小フォントサイズ */
+.stTextInput input,
+.stTextArea textarea,
+.stSelectbox select,
+.stNumberInput input {
+    font-size: 16px;
+}
+
+/* =========================================================
+   PC / タブレット レイアウト（431px 以上）: 変更なし
+   ========================================================= */
+
+/* =========================================================
+   スマホ レイアウト（430px 以下 = iPhone最大幅）
+   ========================================================= */
+@media (max-width: 430px) {
+    /* --- コンテナ幅・余白 --- */
+    .block-container {
+        max-width: 100% !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+        padding-top: 0.5rem !important;
+    }
+
+    /* --- PC専用のサイドバーモード選択ラベルを縮小 --- */
+    section[data-testid="stSidebar"] {
+        min-width: 0 !important;
+        width: 260px !important;
+    }
+
+    /* --- 2カラムを縦積みに --- */
+    [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stVerticalBlock"] {
+        min-width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+
+    /* --- ボタン: タップしやすい最小高さ 48px --- */
+    .stButton > button {
+        min-height: 48px !important;
+        font-size: 15px !important;
+        border-radius: 10px !important;
+        padding: 0.4rem 0.8rem !important;
+    }
+    .stButton > button[kind="primary"] {
+        font-size: 16px !important;
+        font-weight: bold !important;
+    }
+
+    /* --- チャット入力 --- */
+    .stChatInput textarea {
+        font-size: 16px !important;
+    }
+
+    /* --- タブ: 横スクロール対応 --- */
+    .stTabs [data-baseweb="tab-list"] {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        gap: 2px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 13px !important;
+        padding: 6px 10px !important;
+        white-space: nowrap !important;
+    }
+
+    /* --- タイトル文字サイズ --- */
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.2rem !important; }
+    h3 { font-size: 1.05rem !important; }
+
+    /* expander ヘッダー */
+    .streamlit-expanderHeader { font-size: 14px !important; }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# セッション初期化
+# ==============================================================================
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if "agent_messages" not in st.session_state:
     st.session_state.agent_messages = []
 
-# ---- サイドバー ----
+# ==============================================================================
+# サイドバー（PC: 常時表示 / モバイル: ハンバーガーメニューで開く）
+# ==============================================================================
 with st.sidebar:
     st.title("🍳 AI料理アシスタント")
     st.markdown("---")
@@ -48,7 +142,7 @@ with st.sidebar:
                 st.session_state.pending_agent_message = ex
 
         st.markdown("---")
-        if st.button("会話をリセット", use_container_width=True, type="secondary"):
+        if st.button("🗑️ 会話をリセット", use_container_width=True, type="secondary"):
             requests.post(
                 f"{BACKEND_URL}/agent/clear",
                 json={"session_id": st.session_state.session_id},
@@ -57,6 +151,7 @@ with st.sidebar:
             st.rerun()
 
     st.caption(f"セッションID: `{st.session_state.session_id[:8]}...`")
+
 
 
 # ==============================================================================
@@ -169,6 +264,7 @@ elif mode == "📖 レシピを追加":
             st.markdown("---")
             st.markdown("### 変換結果")
 
+            # PC: 2カラム / モバイル: CSS で縦積みに
             col_l, col_r = st.columns([1, 1])
             with col_l:
                 edited_title = st.text_input(
@@ -236,6 +332,7 @@ elif mode == "📖 レシピを追加":
     with tab_add:
         st.markdown("### レシピ情報を入力してください")
 
+        # PC: 2カラム / モバイル: CSS で縦積みに
         col1, col2 = st.columns([1, 1])
 
         with col1:
@@ -256,17 +353,12 @@ elif mode == "📖 レシピを追加":
             )
             recipe_time = st.number_input(
                 "調理時間（分）",
-                min_value=5,
-                max_value=180,
-                value=30,
-                step=5,
+                min_value=5, max_value=180, value=30, step=5,
                 key="recipe_time",
             )
             recipe_servings = st.number_input(
                 "人数",
-                min_value=1,
-                max_value=10,
-                value=2,
+                min_value=1, max_value=10, value=2,
                 key="recipe_servings",
             )
 
@@ -294,7 +386,6 @@ elif mode == "📖 レシピを追加":
 
         st.markdown("---")
 
-        # プレビュー
         if recipe_title and recipe_ingredients and recipe_steps:
             with st.expander("📄 Markdownプレビュー", expanded=False):
                 ingredients_md = "\n".join(
@@ -406,7 +497,7 @@ elif mode == "📖 レシピを追加":
             recipes_list = data.get("recipes", [])
 
             if not recipes_list:
-                st.info("S3にレシピが登録されていません。「新規レシピ登録」タブから追加してください。")
+                st.info("S3にレシピが登録されていません。「AIでテキスト変換」タブから追加してください。")
             else:
                 st.markdown(f"**合計 {len(recipes_list)} 件**")
                 for recipe in recipes_list:
