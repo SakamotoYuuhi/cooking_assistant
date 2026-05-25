@@ -7,3 +7,4 @@ langchain-aws
 python-dotenv
 requests
 pydantic
+faiss-cpu
