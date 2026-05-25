@@ -34,12 +34,8 @@ st.markdown("""
 }
 
 /* =========================================================
-   PC / タブレット レイアウト（431px 以上）
+   PC / タブレット レイアウト（431px 以上）: 変更なし
    ========================================================= */
-@media (min-width: 431px) {
-    /* モバイル専用ナビゲーションは非表示 */
-    .mobile-nav-bar { display: none !important; }
-}
 
 /* =========================================================
    スマホ レイアウト（430px 以下 = iPhone最大幅）
@@ -102,15 +98,6 @@ st.markdown("""
     h2 { font-size: 1.2rem !important; }
     h3 { font-size: 1.05rem !important; }
 
-    /* --- モバイル専用ナビバー表示 --- */
-    .mobile-nav-bar {
-        display: block !important;
-        background: #f0f2f6;
-        border-radius: 10px;
-        padding: 6px 8px;
-        margin-bottom: 10px;
-    }
-
     /* expander ヘッダー */
     .streamlit-expanderHeader { font-size: 14px !important; }
 }
@@ -165,23 +152,6 @@ with st.sidebar:
 
     st.caption(f"セッションID: `{st.session_state.session_id[:8]}...`")
 
-
-# ==============================================================================
-# モバイル専用: 上部にモード切替バー（PC では CSS で非表示）
-# ==============================================================================
-st.markdown('<div class="mobile-nav-bar">', unsafe_allow_html=True)
-mobile_mode = st.selectbox(
-    "モード",
-    ["🤖 料理エージェント", "📖 レシピを追加"],
-    index=0 if mode == "🤖 料理エージェント" else 1,
-    key="mobile_mode_selector",
-    label_visibility="collapsed",
-)
-st.markdown('</div>', unsafe_allow_html=True)
-
-# モバイル側で変更された場合はサイドバーの値を上書き
-if mobile_mode != mode:
-    mode = mobile_mode
 
 
 # ==============================================================================
