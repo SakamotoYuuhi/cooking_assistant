@@ -25,6 +25,18 @@ def _load_index():
         _metadata = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
 
 
+def reload_index():
+    """FAISSインデックスをファイルから再読み込みする（レシピ追加後に呼び出す）"""
+    global _index, _metadata
+    if not INDEX_FILE.exists():
+        raise FileNotFoundError(
+            "FAISSインデックスが見つかりません。"
+            "先に `python3 scripts/build_index.py` を実行してください。"
+        )
+    _index = faiss.read_index(str(INDEX_FILE))
+    _metadata = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+
+
 def search_recipes(query: str, top_k: int = 3) -> List[dict]:
     """
     クエリに意味的に近いレシピをFAISSで検索して返す。
