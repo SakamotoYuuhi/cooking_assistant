@@ -47,9 +47,9 @@ cp deploy/config.sh.example deploy/config.sh
 `deploy/config.sh` を編集：
 
 ```bash
-EC2_HOST="XX.XX.XX.XX"        # EC2のパブリックIPアドレス
-KEY_PATH="~/.ssh/your-key.pem" # SSHキーのパス
-EC2_USER="ec2-user"            # Amazon Linux: ec2-user / Ubuntu: ubuntu
+EC2_HOST="<Elastic IP>"                       # Elastic IP
+KEY_PATH="~/.ssh/cooking-assistant-key.pem"   # SSHキーのパス
+EC2_USER="ec2-user"                           # Amazon Linux 2023
 ```
 
 ---
@@ -60,22 +60,22 @@ EC2にSSH接続してセットアップスクリプトを実行します。
 
 ```bash
 # SSHキーのパーミッション設定
-chmod 400 ~/.ssh/your-key.pem
+chmod 400 ~/.ssh/cooking-assistant-key.pem
 
 # EC2に接続
-ssh -i ~/.ssh/your-key.pem ec2-user@<EC2のIP>
+ssh -i ~/.ssh/cooking-assistant-key.pem ec2-user@<Elastic IP>
 ```
 
 EC2上で実行：
 
 ```bash
 # セットアップファイルをEC2に転送（ローカルから）
-scp -i ~/.ssh/your-key.pem \
+scp -i ~/.ssh/cooking-assistant-key.pem \
     deploy/setup_ec2.sh \
     deploy/cooking-backend.service \
     deploy/cooking-frontend.service \
     deploy/cooking-assistant.conf \
-    ec2-user@<EC2のIP>:/tmp/
+    ec2-user@<Elastic IP>:/tmp/
 
 # EC2上でセットアップ実行
 chmod +x /tmp/setup_ec2.sh
@@ -87,7 +87,7 @@ sudo /tmp/setup_ec2.sh
 ## STEP 4: .envファイルをEC2に作成
 
 ```bash
-ssh -i ~/.ssh/your-key.pem ec2-user@<EC2のIP>
+ssh -i ~/.ssh/cooking-assistant-key.pem ec2-user@<Elastic IP>
 sudo nano /opt/cooking_assistant/.env
 ```
 
@@ -125,7 +125,7 @@ chmod +x deploy/deploy.sh
 スマホ・ブラウザで以下にアクセス：
 
 ```
-http://<EC2のパブリックIP>
+http://<Elastic IP>
 ```
 
 ---
@@ -133,6 +133,10 @@ http://<EC2のパブリックIP>
 ## サービス管理コマンド
 
 SSH接続後に使用できるコマンドです。
+
+```bash
+ssh -i ~/.ssh/cooking-assistant-key.pem ec2-user@<Elastic IP>
+```
 
 ```bash
 # サービス状態確認

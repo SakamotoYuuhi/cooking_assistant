@@ -27,9 +27,9 @@ if [ "$OS" = "ubuntu" ]; then
     apt-get update -y
     apt-get install -y python3 python3-pip python3-venv nginx git curl
 else
-    # Amazon Linux 2023
+    # Amazon Linux 2023（curl-minimalが既存のためcurlは除外）
     dnf update -y
-    dnf install -y python3 python3-pip nginx git curl
+    dnf install -y python3 python3-pip nginx git
 fi
 
 echo "[1/7] 完了"
