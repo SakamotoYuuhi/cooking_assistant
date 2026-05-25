@@ -129,9 +129,110 @@ elif mode == "📖 レシピを追加":
     st.title("📖 レシピを追加")
     st.caption("新しいレシピをS3に保存します。保存後はRAG検索の対象として自動的に利用できます。")
 
-    tab_add, tab_list = st.tabs(["➕ 新規レシピ登録", "📋 登録済みレシピ一覧"])
+    tab_convert, tab_add, tab_list = st.tabs(["🤖 AIでテキスト変換", "✏️ 手動で入力", "📋 登録済みレシピ一覧"])
 
-    # ---------- 新規レシピ登録 ----------
+    # ---------- AIでテキスト変換 ----------
+    with tab_convert:
+        st.markdown("### ChatGPTなどのレシピテキストをMarkdown形式に変換")
+        st.caption("AIの回答・ブログ記事・メモなど、どんな形式のテキストでもOKです。Bedrockが自動でレシピ形式に整形します。")
+
+        raw_text = st.text_area(
+            "変換したいテキストを貼り付けてください",
+            placeholder="例:\nほうれん草とベーコンのパスタ\n■ 材料\nパスタ 200g\nほうれん草 1束\n...",
+            height=280,
+            key="convert_raw_text",
+        )
+
+        if st.button("🤖 AIで変換する", type="primary", use_container_width=True, key="btn_convert"):
+            if not raw_text.strip():
+                st.error("テキストを入力してください")
+            else:
+                with st.spinner("Bedrockがレシピを整形中...（10〜20秒）"):
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/recipes/convert",
+                            json={"raw_text": raw_text},
+                            timeout=60,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        st.session_state["converted_markdown"] = data["markdown"]
+                        st.session_state["converted_title"] = data["suggested_title"]
+                        st.session_state["converted_filename"] = data["suggested_filename"]
+                        st.success("変換完了！内容を確認・編集してから保存してください。")
+                    except requests.exceptions.ConnectionError:
+                        st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
+                    except Exception as e:
+                        st.error(f"エラー: {str(e)}")
+
+        if st.session_state.get("converted_markdown"):
+            st.markdown("---")
+            st.markdown("### 変換結果")
+
+            col_l, col_r = st.columns([1, 1])
+            with col_l:
+                edited_title = st.text_input(
+                    "レシピ名",
+                    value=st.session_state.get("converted_title", ""),
+                    key="conv_title_input",
+                )
+                edited_filename = st.text_input(
+                    "ファイル名（英数字・アンダースコア）",
+                    value=st.session_state.get("converted_filename", ""),
+                    key="conv_filename_input",
+                )
+            with col_r:
+                st.markdown("**プレビュー（Markdown）**")
+                with st.expander("Markdownを表示", expanded=True):
+                    st.markdown(st.session_state["converted_markdown"])
+
+            edited_markdown = st.text_area(
+                "Markdownを編集（必要に応じて修正できます）",
+                value=st.session_state["converted_markdown"],
+                height=300,
+                key="conv_md_edit",
+            )
+
+            st.markdown("---")
+            if st.button("💾 S3に保存してインデックスを更新", type="primary", use_container_width=True, key="btn_conv_save"):
+                if not edited_title.strip():
+                    st.error("レシピ名を入力してください")
+                elif not edited_filename.strip():
+                    st.error("ファイル名を入力してください")
+                else:
+                    filename = edited_filename.strip()
+                    if not filename.endswith(".md"):
+                        filename = f"{filename}.md"
+
+                    with st.spinner("S3に保存してインデックスを再構築中...（30秒ほどかかります）"):
+                        try:
+                            resp = requests.post(
+                                f"{BACKEND_URL}/recipes/upload",
+                                json={
+                                    "filename": filename,
+                                    "title": edited_title,
+                                    "content": edited_markdown,
+                                },
+                                timeout=120,
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+                            if data["index_rebuilt"]:
+                                st.success(
+                                    f"✅ {data['message']}\n\n"
+                                    f"S3キー: `{data['s3_key']}`"
+                                )
+                                st.session_state.pop("converted_markdown", None)
+                                st.session_state.pop("converted_title", None)
+                                st.session_state.pop("converted_filename", None)
+                            else:
+                                st.warning(data["message"])
+                        except requests.exceptions.ConnectionError:
+                            st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
+                        except Exception as e:
+                            st.error(f"エラー: {str(e)}")
+
+    # ---------- 手動入力 ----------
     with tab_add:
         st.markdown("### レシピ情報を入力してください")
 
