@@ -79,9 +79,10 @@ echo "[2/5] 完了"
 echo "[3/5] 依存パッケージをインストール..."
 
 ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" << 'REMOTE'
-    sudo chown -R appuser:appuser /opt/cooking_assistant
-    sudo -u appuser /opt/cooking_assistant/venv/bin/pip install -q --upgrade pip
-    sudo -u appuser /opt/cooking_assistant/venv/bin/pip install -q -r /opt/cooking_assistant/requirements.txt
+    sudo chown -R ec2-user:ec2-user /opt/cooking_assistant
+    sudo chmod 600 /opt/cooking_assistant/.env
+    /opt/cooking_assistant/venv/bin/pip install -q --upgrade pip
+    /opt/cooking_assistant/venv/bin/pip install -q -r /opt/cooking_assistant/requirements.txt
     echo "  → パッケージインストール完了"
 REMOTE
 
