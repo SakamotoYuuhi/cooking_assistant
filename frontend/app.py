@@ -14,6 +14,12 @@ st.set_page_config(
     layout="wide",
 )
 
+MODE_CONFIG = {
+    "💬 料理チャット（RAG）": {"icon": "💬", "tab_title": "料理チャット"},
+    "🍳 料理エージェント":    {"icon": "🍳", "tab_title": "料理エージェント"},
+    "🏢 社内ナレッジ検索":    {"icon": "🏢", "tab_title": "社内ナレッジ検索"},
+}
+
 # セッションIDの初期化
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
@@ -32,6 +38,7 @@ with st.sidebar:
     mode = st.radio(
         "モードを選択",
         ["💬 料理チャット（RAG）", "🍳 料理エージェント", "🏢 社内ナレッジ検索"],
+        key="mode_selector",
         help=(
             "料理チャット: RAGでレシピ検索して回答\n"
             "料理エージェント: 複数ツールを自律的に組み合わせて回答\n"
@@ -98,13 +105,14 @@ with st.sidebar:
     st.caption(f"セッションID: `{st.session_state.session_id[:8]}...`")
 
 
+
 # ---- チャットモード ----
 if mode == "💬 料理チャット（RAG）":
-    st.title("💬 チャットモード（RAG）")
+    st.title("💬 料理チャット（RAG）")
     st.caption("食材を伝えると、レシピ集を参照して献立・レシピを提案します")
 
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🍳"):
+        with st.chat_message("🧑" if msg["role"] == "user" else "🍳"):
             st.markdown(msg["content"])
 
     pending = st.session_state.pop("pending_message", None)
@@ -113,10 +121,10 @@ if mode == "💬 料理チャット（RAG）":
 
     if message_to_send:
         st.session_state.messages.append({"role": "user", "content": message_to_send})
-        with st.chat_message("user", avatar="🧑"):
+        with st.chat_message("🧑"):
             st.markdown(message_to_send)
 
-        with st.chat_message("assistant", avatar="🍳"):
+        with st.chat_message("🍳"):
             with st.spinner("レシピを検索中..."):
                 try:
                     response = requests.post(
@@ -137,11 +145,11 @@ if mode == "💬 料理チャット（RAG）":
 
 # ---- 料理エージェントモード ----
 elif mode == "🍳 料理エージェント":
-    st.title("🤖 エージェントモード")
+    st.title("🍳 料理エージェント")
     st.caption("複数のツール（レシピ検索・献立作成・買い物リスト・栄養分析）を自律的に組み合わせて回答します")
 
     for msg in st.session_state.agent_messages:
-        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
+        with st.chat_message("🧑" if msg["role"] == "user" else "🍳"):
             st.markdown(msg["content"])
             if msg.get("tools_used"):
                 with st.expander(f"🔧 使用ツール（{len(msg['tools_used'])}個）"):
@@ -155,10 +163,10 @@ elif mode == "🍳 料理エージェント":
 
     if agent_message:
         st.session_state.agent_messages.append({"role": "user", "content": agent_message})
-        with st.chat_message("user", avatar="🧑"):
+        with st.chat_message("🧑"):
             st.markdown(agent_message)
 
-        with st.chat_message("assistant", avatar="🤖"):
+        with st.chat_message("🍳"):
             with st.spinner("エージェントが考え中...（ツールを使って処理しています）"):
                 try:
                     response = requests.post(
@@ -203,7 +211,7 @@ else:
     )
 
     for msg in st.session_state.business_messages:
-        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🏢"):
+        with st.chat_message("🧑" if msg["role"] == "user" else "🏢"):
             st.markdown(msg["content"])
             if msg.get("tools_used"):
                 with st.expander(f"🔍 検索したドキュメント（{len(msg['tools_used'])}件）"):
@@ -217,10 +225,10 @@ else:
 
     if biz_message:
         st.session_state.business_messages.append({"role": "user", "content": biz_message})
-        with st.chat_message("user", avatar="🧑"):
+        with st.chat_message("🧑"):
             st.markdown(biz_message)
 
-        with st.chat_message("assistant", avatar="🏢"):
+        with st.chat_message("🏢"):
             with st.spinner("社内ナレッジを検索中..."):
                 try:
                     response = requests.post(
