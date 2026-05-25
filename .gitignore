@@ -1,6 +1,9 @@
 # 認証情報
 .env
 
+# FAISSインデックス（build_index.pyで再生成可能なため除外）
+data/index/
+
 # Python
 __pycache__/
 *.pyc

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Dict, List
 from ..models.schemas import ChatRequest, ChatResponse, ClearRequest, Message
 from ..services.bedrock import chat_with_bedrock
+from ..services.rag import search_recipes, build_rag_context
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -12,7 +13,7 @@ session_store: Dict[str, List[Message]] = {}
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """ユーザーのメッセージを受け取り、Bedrockに投げて返答を返す"""
+    """ユーザーのメッセージを受け取り、RAGで関連レシピを検索してBedrockに投げて返答を返す"""
     session_id = request.session_id
 
     if session_id not in session_store:
@@ -20,8 +21,23 @@ async def chat(request: ChatRequest):
 
     history = session_store[session_id]
 
+    # RAGでレシピ検索（インデックス未構築の場合はスキップしてフォールバック）
+    rag_context = ""
     try:
-        reply = chat_with_bedrock(history, request.message)
+        retrieved = search_recipes(request.message, top_k=3)
+        rag_context = build_rag_context(retrieved)
+    except FileNotFoundError:
+        pass  # インデックス未構築時はRAGなしで回答
+    except Exception:
+        pass  # RAGエラー時もフォールバック
+
+    # RAGコンテキストをユーザーメッセージに付加
+    augmented_message = request.message
+    if rag_context:
+        augmented_message = f"{rag_context}\n\n【ユーザーの質問】\n{request.message}"
+
+    try:
+        reply = chat_with_bedrock(history, augmented_message)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock呼び出しエラー: {str(e)}")
 
