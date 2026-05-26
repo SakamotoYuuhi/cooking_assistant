@@ -36,17 +36,23 @@ st.markdown("""
 /* =========================================================
    PC / タブレット レイアウト（431px 以上）: 変更なし
    ========================================================= */
+@media (min-width: 431px) {
+    .block-container {
+        padding-top: 1rem !important;
+    }
+}
 
 /* =========================================================
    スマホ レイアウト（430px 以下 = iPhone最大幅）
    ========================================================= */
 @media (max-width: 430px) {
     /* --- コンテナ幅・余白 --- */
+    /* padding-top を大きめに取り、固定ヘッダー(ハンバーガーメニュー行)との重なりを防ぐ */
     .block-container {
         max-width: 100% !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
-        padding-top: 0.5rem !important;
+        padding-top: 4.5rem !important;
     }
 
     /* --- PC専用のサイドバーモード選択ラベルを縮小 --- */
