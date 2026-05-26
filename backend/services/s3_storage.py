@@ -1,9 +1,12 @@
 """
-S3へのレシピ保存・取得を担うサービス層。
+S3へのレシピ・画像保存・取得を担うサービス層。
 
 バケット構造:
   s3://{S3_BUCKET_NAME}/{S3_RECIPES_PREFIX}{filename}.md
   例: s3://ai-agent-dev-sakamoto/cooking-assistant/recipes/chicken_teriyaki.md
+
+  s3://{S3_BUCKET_NAME}/{S3_IMAGES_PREFIX}{filename_stem}.jpg
+  例: s3://ai-agent-dev-sakamoto/cooking-assistant/images/chicken_teriyaki.jpg
 """
 
 import boto3
@@ -30,6 +33,12 @@ def _bucket() -> str:
 
 def _prefix() -> str:
     return os.getenv("S3_RECIPES_PREFIX", "cooking-assistant/recipes/")
+
+
+def _image_prefix() -> str:
+    base = os.getenv("S3_RECIPES_PREFIX", "cooking-assistant/recipes/")
+    parent = base.rstrip("/").rsplit("/", 1)[0]
+    return f"{parent}/images/"
 
 
 def upload_recipe(filename: str, content: str) -> str:
@@ -92,6 +101,64 @@ def get_recipe(filename: str) -> str:
     key = f"{_prefix()}{filename}"
     response = s3.get_object(Bucket=_bucket(), Key=key)
     return response["Body"].read().decode("utf-8")
+
+
+def upload_recipe_image(filename_stem: str, image_bytes: bytes, ext: str = "jpg") -> str:
+    """
+    レシピの完成画像をS3にアップロードする。
+
+    Args:
+        filename_stem: レシピファイル名から拡張子を除いたもの（例: chicken_karaage）
+        image_bytes:   画像バイナリ
+        ext:           拡張子（jpg / png）
+
+    Returns:
+        アップロードされたS3オブジェクトのキー
+    """
+    ext = ext.lstrip(".").lower()
+    content_type = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
+    s3 = _get_s3_client()
+    key = f"{_image_prefix()}{filename_stem}.{ext}"
+    s3.put_object(
+        Bucket=_bucket(),
+        Key=key,
+        Body=image_bytes,
+        ContentType=content_type,
+    )
+    return key
+
+
+def get_recipe_image(filename_stem: str) -> tuple[bytes, str] | None:
+    """
+    S3からレシピ画像を取得する。存在しない場合は None を返す。
+
+    Returns:
+        (画像バイナリ, content_type) または None
+    """
+    s3 = _get_s3_client()
+    for ext in ("jpg", "jpeg", "png"):
+        key = f"{_image_prefix()}{filename_stem}.{ext}"
+        try:
+            resp = s3.get_object(Bucket=_bucket(), Key=key)
+            return resp["Body"].read(), resp["ContentType"]
+        except s3.exceptions.NoSuchKey:
+            continue
+        except Exception:
+            continue
+    return None
+
+
+def recipe_image_exists(filename_stem: str) -> bool:
+    """レシピ画像がS3に存在するか確認する"""
+    s3 = _get_s3_client()
+    for ext in ("jpg", "jpeg", "png"):
+        key = f"{_image_prefix()}{filename_stem}.{ext}"
+        try:
+            s3.head_object(Bucket=_bucket(), Key=key)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def download_all_recipes(local_dir: Path) -> List[dict]:
