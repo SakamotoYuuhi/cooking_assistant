@@ -59,3 +59,30 @@ class RecipeImageUploadRequest(BaseModel):
     filename_stem: str
     image_base64: str
     image_ext: str = "jpg"
+
+
+class RecipeUpdateRequest(BaseModel):
+    title: str
+    content: str
+    image_base64: Optional[str] = None
+    image_ext: str = "jpg"
+    delete_image: bool = False
+
+
+class RecipeUpdateResponse(BaseModel):
+    s3_key: str
+    filename: str
+    index_rebuilt: bool
+    message: str
+    image_s3_key: Optional[str] = None
+    image_deleted: bool = False
+
+
+class RecipeImageUpdateRequest(BaseModel):
+    image_base64: str
+    image_ext: str = "jpg"
+
+
+class RecipeImageUpdateResponse(BaseModel):
+    image_s3_key: str
+    message: str

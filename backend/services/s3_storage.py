@@ -161,6 +161,45 @@ def recipe_image_exists(filename_stem: str) -> bool:
     return False
 
 
+def delete_recipe(filename: str) -> bool:
+    """
+    S3からレシピMarkdownを削除する。
+
+    Args:
+        filename: 削除するファイル名（例: my_recipe.md）
+
+    Returns:
+        削除成功の場合 True
+    """
+    s3 = _get_s3_client()
+    key = f"{_prefix()}{filename}"
+    s3.delete_object(Bucket=_bucket(), Key=key)
+    return True
+
+
+def delete_recipe_image(filename_stem: str) -> bool:
+    """
+    S3からレシピ画像を削除する。存在する拡張子（jpg/jpeg/png）を全て試行して削除する。
+
+    Args:
+        filename_stem: ファイル名から拡張子を除いたもの（例: chicken_karaage）
+
+    Returns:
+        1件以上削除された場合 True、存在しなかった場合 False
+    """
+    s3 = _get_s3_client()
+    deleted = False
+    for ext in ("jpg", "jpeg", "png"):
+        key = f"{_image_prefix()}{filename_stem}.{ext}"
+        try:
+            s3.head_object(Bucket=_bucket(), Key=key)
+            s3.delete_object(Bucket=_bucket(), Key=key)
+            deleted = True
+        except Exception:
+            continue
+    return deleted
+
+
 def download_all_recipes(local_dir: Path) -> List[dict]:
     """
     S3上の全レシピをローカルディレクトリに保存する（インデックス再構築用）。
