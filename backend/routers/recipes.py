@@ -176,26 +176,64 @@ IMAGE_MODEL_ID = "stability.stable-image-core-v1:1"
 IMAGE_REGION = "us-west-2"
 
 
-def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tuple[bytes, str]:
-    """
-    Bedrock Stable Image Core (us-west-2) を使って料理の完成画像を生成する。
-    ap-northeast-1 にはACTIVEな画像生成モデルがないため us-west-2 を使用する。
+TEXT_MODEL_ID = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
 
-    Returns:
-        (画像バイナリ, content_type)
+
+def _build_image_prompt(recipe_title: str, recipe_content: str) -> str:
     """
-    client = boto3.client(
+    Claudeを使ってレシピ内容から Stable Diffusion 用の英語プロンプトを生成する。
+    日本語タイトルをそのまま渡すと誤った画像が生成されるため、
+    Claudeに料理の見た目を英語で詳しく描写させる。
+    """
+    text_client = boto3.client(
         "bedrock-runtime",
-        region_name=IMAGE_REGION,
+        region_name=os.getenv("AWS_DEFAULT_REGION", "ap-northeast-1"),
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     )
 
-    prompt = (
-        f"Professional food photography of {recipe_title}, "
-        f"beautifully plated Japanese home cooking dish, "
-        f"natural lighting, top-down angle, appetizing presentation, "
-        f"white plate, clean background, high resolution"
+    system = (
+        "You are an expert at writing image generation prompts for Stable Diffusion. "
+        "Given a Japanese recipe, describe the finished dish in English for a food photography prompt. "
+        "Focus on: dish name in English, appearance, color, texture, plating style, bowl/plate type. "
+        "Output ONLY the prompt text (under 100 words). No explanation."
+    )
+    user_msg = f"Recipe title: {recipe_title}\n\nRecipe content:\n{recipe_content[:500]}"
+
+    response = text_client.invoke_model(
+        modelId=TEXT_MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 150,
+            "system": system,
+            "messages": [{"role": "user", "content": user_msg}],
+        }),
+    )
+    dish_description = json.loads(response["body"].read())["content"][0]["text"].strip()
+    return (
+        f"Professional food photography, {dish_description}, "
+        f"natural lighting, top-down angle, appetizing, clean background, high resolution"
+    )
+
+
+def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tuple[bytes, str]:
+    """
+    Stable Image Core (us-west-2) を使って料理の完成画像を生成する。
+    ap-northeast-1 にはACTIVEな画像生成モデルがないため us-west-2 を使用。
+    プロンプトはClaudeで英語に変換してから渡す。
+
+    Returns:
+        (画像バイナリ, content_type)
+    """
+    prompt = _build_image_prompt(recipe_title, recipe_content)
+
+    image_client = boto3.client(
+        "bedrock-runtime",
+        region_name=IMAGE_REGION,
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     )
 
     body = {
@@ -203,7 +241,7 @@ def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tupl
         "output_format": "jpeg",
     }
 
-    response = client.invoke_model(
+    response = image_client.invoke_model(
         modelId=IMAGE_MODEL_ID,
         contentType="application/json",
         accept="application/json",
