@@ -125,6 +125,75 @@ def _safe_md(content: str) -> str:
     return _re.sub(r"~", r"\\~", content)
 
 
+def _image_ui(key_prefix: str, recipe_title: str = "", recipe_content: str = "") -> str | None:
+    """
+    画像アップロード＋AI生成UIを表示し、選択・生成された画像のbase64文字列を返す。
+    画像がない場合は None を返す。
+
+    Args:
+        key_prefix:      Streamlit widget key の重複防止用プレフィックス
+        recipe_title:    AI画像生成に使うレシピ名
+        recipe_content:  AI画像生成に使うレシピ内容
+    """
+    st.markdown("##### 完成画像（任意）")
+    col_up, col_gen = st.columns([1, 1])
+
+    with col_up:
+        uploaded = st.file_uploader(
+            "画像をアップロード",
+            type=["jpg", "jpeg", "png"],
+            key=f"{key_prefix}_file_uploader",
+            label_visibility="collapsed",
+        )
+        if uploaded:
+            import base64 as _b64
+            img_bytes = uploaded.read()
+            img_b64 = _b64.b64encode(img_bytes).decode()
+            ext = uploaded.name.rsplit(".", 1)[-1].lower()
+            st.session_state[f"{key_prefix}_image_b64"] = img_b64
+            st.session_state[f"{key_prefix}_image_ext"] = ext
+            st.image(img_bytes, caption="アップロード画像", use_container_width=True)
+
+    with col_gen:
+        btn_disabled = not bool(recipe_title.strip())
+        if st.button(
+            "🎨 AIで画像を生成",
+            key=f"{key_prefix}_gen_btn",
+            use_container_width=True,
+            disabled=btn_disabled,
+            help="レシピ名を入力してから押してください" if btn_disabled else "",
+        ):
+            with st.spinner("Bedrockで画像を生成中...（20〜40秒）"):
+                try:
+                    resp = requests.post(
+                        f"{BACKEND_URL}/recipes/generate-image",
+                        json={"recipe_title": recipe_title, "recipe_content": recipe_content},
+                        timeout=120,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    st.session_state[f"{key_prefix}_image_b64"] = data["image_base64"]
+                    st.session_state[f"{key_prefix}_image_ext"] = "jpg"
+                    st.rerun()
+                except requests.exceptions.ConnectionError:
+                    st.error("バックエンドに接続できません。")
+                except Exception as e:
+                    st.error(f"画像生成エラー: {str(e)}")
+
+    # 生成済み・アップロード済み画像のプレビューと削除ボタン
+    b64 = st.session_state.get(f"{key_prefix}_image_b64")
+    if b64 and not uploaded:
+        import base64 as _b64
+        img_bytes = _b64.b64decode(b64)
+        st.image(img_bytes, caption="生成された画像", use_container_width=True)
+        if st.button("🗑️ 画像を削除", key=f"{key_prefix}_del_btn"):
+            st.session_state.pop(f"{key_prefix}_image_b64", None)
+            st.session_state.pop(f"{key_prefix}_image_ext", None)
+            st.rerun()
+
+    return st.session_state.get(f"{key_prefix}_image_b64")
+
+
 # ==============================================================================
 # セッション初期化
 # ==============================================================================
@@ -296,6 +365,9 @@ if mode == "🤖 料理エージェント" and st.session_state.get("extracted_m
         key="ext_md_edit",
     )
 
+    st.markdown("---")
+    _image_ui("ext", recipe_title=ext_title, recipe_content=ext_markdown)
+
     col_save, col_cancel = st.columns([3, 1])
     with col_save:
         if st.button("💾 S3に保存してインデックスを更新", type="primary", use_container_width=True, key="btn_ext_save"):
@@ -315,6 +387,8 @@ if mode == "🤖 料理エージェント" and st.session_state.get("extracted_m
                                 "filename": filename,
                                 "title": ext_title,
                                 "content": ext_markdown,
+                                "image_base64": st.session_state.get("ext_image_b64"),
+                                "image_ext": st.session_state.get("ext_image_ext", "jpg"),
                             },
                             timeout=120,
                         )
@@ -328,6 +402,8 @@ if mode == "🤖 料理エージェント" and st.session_state.get("extracted_m
                             st.session_state.pop("extracted_markdown", None)
                             st.session_state.pop("extracted_title", None)
                             st.session_state.pop("extracted_filename", None)
+                            st.session_state.pop("ext_image_b64", None)
+                            st.session_state.pop("ext_image_ext", None)
                             st.rerun()
                         else:
                             st.warning(data["message"])
@@ -340,6 +416,8 @@ if mode == "🤖 料理エージェント" and st.session_state.get("extracted_m
             st.session_state.pop("extracted_markdown", None)
             st.session_state.pop("extracted_title", None)
             st.session_state.pop("extracted_filename", None)
+            st.session_state.pop("ext_image_b64", None)
+            st.session_state.pop("ext_image_ext", None)
             st.rerun()
 
 
@@ -416,6 +494,8 @@ elif mode == "📖 レシピを追加":
             )
 
             st.markdown("---")
+            _image_ui("conv", recipe_title=edited_title, recipe_content=edited_markdown)
+
             if st.button("💾 S3に保存してインデックスを更新", type="primary", use_container_width=True, key="btn_conv_save"):
                 if not edited_title.strip():
                     st.error("レシピ名を入力してください")
@@ -434,6 +514,8 @@ elif mode == "📖 レシピを追加":
                                     "filename": filename,
                                     "title": edited_title,
                                     "content": edited_markdown,
+                                    "image_base64": st.session_state.get("conv_image_b64"),
+                                    "image_ext": st.session_state.get("conv_image_ext", "jpg"),
                                 },
                                 timeout=120,
                             )
@@ -447,6 +529,8 @@ elif mode == "📖 レシピを追加":
                                 st.session_state.pop("converted_markdown", None)
                                 st.session_state.pop("converted_title", None)
                                 st.session_state.pop("converted_filename", None)
+                                st.session_state.pop("conv_image_b64", None)
+                                st.session_state.pop("conv_image_ext", None)
                             else:
                                 st.warning(data["message"])
                         except requests.exceptions.ConnectionError:
@@ -543,6 +627,8 @@ elif mode == "📖 レシピを追加":
 """
                 st.code(preview, language="markdown")
 
+        _image_ui("manual", recipe_title=recipe_title, recipe_content="")
+
         if st.button("💾 S3に保存してインデックスを更新", type="primary", use_container_width=True):
             if not recipe_title:
                 st.error("レシピ名を入力してください")
@@ -592,6 +678,8 @@ elif mode == "📖 レシピを追加":
                                 "filename": filename,
                                 "title": recipe_title,
                                 "content": content,
+                                "image_base64": st.session_state.get("manual_image_b64"),
+                                "image_ext": st.session_state.get("manual_image_ext", "jpg"),
                             },
                             timeout=120,
                         )
@@ -602,6 +690,8 @@ elif mode == "📖 レシピを追加":
                                 f"✅ {data['message']}\n\n"
                                 f"S3キー: `{data['s3_key']}`"
                             )
+                            st.session_state.pop("manual_image_b64", None)
+                            st.session_state.pop("manual_image_ext", None)
                         else:
                             st.warning(data["message"])
                     except requests.exceptions.ConnectionError:
@@ -642,7 +732,15 @@ elif mode == "📖 レシピを追加":
                                     timeout=10,
                                 )
                                 r.raise_for_status()
-                                st.markdown(_safe_md(r.json()["content"]))
+                                rdata = r.json()
+                                st.markdown(_safe_md(rdata["content"]))
+                                if rdata.get("has_image"):
+                                    img_resp = requests.get(
+                                        f"{BACKEND_URL}/recipes/{recipe['filename']}/image",
+                                        timeout=15,
+                                    )
+                                    if img_resp.ok:
+                                        st.image(img_resp.content, caption="完成画像", use_container_width=True)
                             except Exception as e:
                                 st.error(f"取得エラー: {e}")
 

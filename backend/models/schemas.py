@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Any
+from typing import List, Any, Optional
 
 
 class Message(BaseModel):
@@ -43,3 +43,19 @@ class ExtractRecipeResponse(BaseModel):
     markdown: str
     suggested_title: str
     suggested_filename: str
+
+
+class GenerateImageRequest(BaseModel):
+    recipe_title: str
+    recipe_content: str
+
+
+class GenerateImageResponse(BaseModel):
+    image_base64: str
+    content_type: str
+
+
+class RecipeImageUploadRequest(BaseModel):
+    filename_stem: str
+    image_base64: str
+    image_ext: str = "jpg"

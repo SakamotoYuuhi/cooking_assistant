@@ -1,23 +1,28 @@
 """
 レシピ管理エンドポイント。
 
-POST /recipes/convert  - 生テキストをBedrockでMarkdown形式に変換
-POST /recipes/upload   - レシピをS3に保存してFAISSインデックスを再構築
-GET  /recipes          - S3上のレシピ一覧を返す
-GET  /recipes/{filename} - 指定レシピの内容を返す
+POST /recipes/convert        - 生テキストをBedrockでMarkdown形式に変換
+POST /recipes/generate-image - レシピ内容からBedrockで完成画像を生成
+POST /recipes/upload         - レシピをS3に保存してFAISSインデックスを再構築
+GET  /recipes                - S3上のレシピ一覧を返す
+GET  /recipes/{filename}     - 指定レシピの内容を返す
+GET  /recipes/{filename}/image - 指定レシピの画像を返す
 """
 
+import base64
 import subprocess
 import sys
 import json
 import os
 import boto3
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..services.s3_storage import upload_recipe, list_recipes, get_recipe
+from ..services.s3_storage import upload_recipe, list_recipes, get_recipe, upload_recipe_image, get_recipe_image, recipe_image_exists
 from ..services.rag import reload_index
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
@@ -40,6 +45,8 @@ class RecipeUploadRequest(BaseModel):
     filename: str
     title: str
     content: str
+    image_base64: Optional[str] = None
+    image_ext: str = "jpg"
 
 
 class RecipeUploadResponse(BaseModel):
@@ -47,6 +54,17 @@ class RecipeUploadResponse(BaseModel):
     filename: str
     index_rebuilt: bool
     message: str
+    image_s3_key: Optional[str] = None
+
+
+class GenerateImageRequest(BaseModel):
+    recipe_title: str
+    recipe_content: str
+
+
+class GenerateImageResponse(BaseModel):
+    image_base64: str
+    content_type: str
 
 
 # ---- ヘルパー ----
@@ -154,6 +172,60 @@ def _convert_with_bedrock(raw_text: str) -> RecipeConvertResponse:
         suggested_filename=filename,
     )
 
+IMAGE_MODEL_ID = "amazon.titan-image-generator-v2:0"
+
+
+def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tuple[bytes, str]:
+    """
+    Bedrock Titan Image Generator v2 を使って料理の完成画像を生成する。
+
+    Returns:
+        (画像バイナリ, content_type)
+    """
+    client = boto3.client(
+        "bedrock-runtime",
+        region_name=os.getenv("AWS_DEFAULT_REGION", "ap-northeast-1"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+
+    ingredients_hint = ""
+    for line in recipe_content.splitlines():
+        if line.startswith("- ") and ":" in line:
+            ingredients_hint = line.lstrip("- ").split(":")[0].strip()
+            break
+
+    prompt = (
+        f"Professional food photography of {recipe_title}, "
+        f"beautifully plated Japanese home cooking dish, "
+        f"natural lighting, top-down angle, appetizing presentation, "
+        f"white plate, clean background, high resolution"
+    )
+
+    body = {
+        "taskType": "TEXT_IMAGE",
+        "textToImageParams": {"text": prompt},
+        "imageGenerationConfig": {
+            "numberOfImages": 1,
+            "height": 512,
+            "width": 512,
+            "quality": "standard",
+        },
+    }
+
+    response = client.invoke_model(
+        modelId=IMAGE_MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps(body),
+    )
+
+    result = json.loads(response["body"].read())
+    image_base64_str = result["images"][0]
+    image_bytes = base64.b64decode(image_base64_str)
+    return image_bytes, "image/jpeg"
+
+
 def _rebuild_index() -> bool:
     """
     build_index.py をサブプロセスで実行してFAISSインデックスを再構築する。
@@ -189,6 +261,26 @@ async def convert_recipe(request: RecipeConvertRequest):
         raise HTTPException(status_code=500, detail=f"Bedrock変換エラー: {e}")
 
 
+@router.post("/generate-image", response_model=GenerateImageResponse)
+async def generate_image(request: GenerateImageRequest):
+    """
+    レシピ名・内容をもとにBedrock Titan Image Generatorで完成料理の画像を生成する。
+    生成結果はbase64で返すのでフロントエンドでプレビュー表示後、/upload に含めて保存する。
+    """
+    if not request.recipe_title.strip():
+        raise HTTPException(status_code=400, detail="recipe_title が空です")
+    try:
+        image_bytes, content_type = _generate_image_with_bedrock(
+            request.recipe_title, request.recipe_content
+        )
+        return GenerateImageResponse(
+            image_base64=base64.b64encode(image_bytes).decode("utf-8"),
+            content_type=content_type,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"画像生成エラー: {e}")
+
+
 @router.post("/upload", response_model=RecipeUploadResponse)
 async def upload(request: RecipeUploadRequest):
     """
@@ -204,6 +296,17 @@ async def upload(request: RecipeUploadRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"S3アップロードエラー: {e}")
 
+    # 画像が添付されている場合はS3に保存
+    image_s3_key = None
+    if request.image_base64:
+        try:
+            filename_stem = filename.removesuffix(".md")
+            image_bytes = base64.b64decode(request.image_base64)
+            image_s3_key = upload_recipe_image(filename_stem, image_bytes, request.image_ext)
+        except Exception as e:
+            # 画像保存失敗はレシピ保存の失敗扱いにしない（警告のみ）
+            image_s3_key = None
+
     index_rebuilt = False
     try:
         index_rebuilt = _rebuild_index()
@@ -212,14 +315,20 @@ async def upload(request: RecipeUploadRequest):
             s3_key=s3_key,
             filename=filename,
             index_rebuilt=False,
+            image_s3_key=image_s3_key,
             message=f"S3への保存は成功しましたが、インデックス再構築に失敗しました: {e}",
         )
+
+    msg = f"レシピ「{request.title}」をS3に保存し、インデックスを更新しました"
+    if image_s3_key:
+        msg += "（画像も保存しました）"
 
     return RecipeUploadResponse(
         s3_key=s3_key,
         filename=filename,
         index_rebuilt=index_rebuilt,
-        message=f"レシピ「{request.title}」をS3に保存し、インデックスを更新しました",
+        image_s3_key=image_s3_key,
+        message=msg,
     )
 
 
@@ -238,6 +347,19 @@ async def get_recipe_content(filename: str):
     """指定ファイル名のレシピ内容を返す"""
     try:
         content = get_recipe(filename)
-        return {"filename": filename, "content": content}
+        filename_stem = filename.removesuffix(".md")
+        has_image = recipe_image_exists(filename_stem)
+        return {"filename": filename, "content": content, "has_image": has_image}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"レシピが見つかりません: {e}")
+
+
+@router.get("/{filename}/image")
+async def get_recipe_image_endpoint(filename: str):
+    """指定レシピの完成画像をバイナリで返す"""
+    filename_stem = filename.removesuffix(".md")
+    result = get_recipe_image(filename_stem)
+    if result is None:
+        raise HTTPException(status_code=404, detail="画像が見つかりません")
+    image_bytes, content_type = result
+    return Response(content=image_bytes, media_type=content_type)
