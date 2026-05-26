@@ -32,3 +32,14 @@ class AgentResponse(BaseModel):
     reply: str
     tools_used: List[dict]  # 使用されたツールのログ
     history: List[Message]
+
+
+class ExtractRecipeRequest(BaseModel):
+    session_id: str
+
+
+class ExtractRecipeResponse(BaseModel):
+    found: bool
+    markdown: str
+    suggested_title: str
+    suggested_filename: str
