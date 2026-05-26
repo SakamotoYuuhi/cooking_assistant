@@ -111,6 +111,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
+# ユーティリティ
+# ==============================================================================
+import re as _re
+
+def _safe_md(content: str) -> str:
+    """
+    Markdownとしてレンダリングする前に ~ をエスケープする。
+    AIが誤って ~~ (strikethrough) や ~ (subscript) を生成すると
+    「小さじ」→「弱じ」のように文字が消える問題を防ぐ。
+    レシピMarkdownでは ~ を意図的に使う場面がないため全てエスケープして安全。
+    """
+    return _re.sub(r"~", r"\\~", content)
+
+
+# ==============================================================================
 # セッション初期化
 # ==============================================================================
 if "session_id" not in st.session_state:
@@ -272,7 +287,7 @@ if mode == "🤖 料理エージェント" and st.session_state.get("extracted_m
     with col_r:
         st.markdown("**プレビュー**")
         with st.expander("Markdownを表示", expanded=True):
-            st.markdown(st.session_state["extracted_markdown"])
+                    st.markdown(_safe_md(st.session_state["extracted_markdown"]))
 
     ext_markdown = st.text_area(
         "Markdownを編集（必要に応じて修正できます）",
@@ -391,7 +406,7 @@ elif mode == "📖 レシピを追加":
             with col_r:
                 st.markdown("**プレビュー（Markdown）**")
                 with st.expander("Markdownを表示", expanded=True):
-                    st.markdown(st.session_state["converted_markdown"])
+                    st.markdown(_safe_md(st.session_state["converted_markdown"]))
 
             edited_markdown = st.text_area(
                 "Markdownを編集（必要に応じて修正できます）",
@@ -627,7 +642,7 @@ elif mode == "📖 レシピを追加":
                                     timeout=10,
                                 )
                                 r.raise_for_status()
-                                st.markdown(r.json()["content"])
+                                st.markdown(_safe_md(r.json()["content"]))
                             except Exception as e:
                                 st.error(f"取得エラー: {e}")
 
