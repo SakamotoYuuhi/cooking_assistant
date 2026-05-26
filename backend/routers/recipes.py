@@ -172,28 +172,24 @@ def _convert_with_bedrock(raw_text: str) -> RecipeConvertResponse:
         suggested_filename=filename,
     )
 
-IMAGE_MODEL_ID = "amazon.titan-image-generator-v2:0"
+IMAGE_MODEL_ID = "stability.stable-image-core-v1:1"
+IMAGE_REGION = "us-west-2"
 
 
 def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tuple[bytes, str]:
     """
-    Bedrock Titan Image Generator v2 を使って料理の完成画像を生成する。
+    Bedrock Stable Image Core (us-west-2) を使って料理の完成画像を生成する。
+    ap-northeast-1 にはACTIVEな画像生成モデルがないため us-west-2 を使用する。
 
     Returns:
         (画像バイナリ, content_type)
     """
     client = boto3.client(
         "bedrock-runtime",
-        region_name=os.getenv("AWS_DEFAULT_REGION", "ap-northeast-1"),
+        region_name=IMAGE_REGION,
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     )
-
-    ingredients_hint = ""
-    for line in recipe_content.splitlines():
-        if line.startswith("- ") and ":" in line:
-            ingredients_hint = line.lstrip("- ").split(":")[0].strip()
-            break
 
     prompt = (
         f"Professional food photography of {recipe_title}, "
@@ -203,14 +199,8 @@ def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tupl
     )
 
     body = {
-        "taskType": "TEXT_IMAGE",
-        "textToImageParams": {"text": prompt},
-        "imageGenerationConfig": {
-            "numberOfImages": 1,
-            "height": 512,
-            "width": 512,
-            "quality": "standard",
-        },
+        "prompt": prompt,
+        "output_format": "jpeg",
     }
 
     response = client.invoke_model(
