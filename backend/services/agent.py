@@ -122,3 +122,112 @@ def _extract_text(content_blocks: list) -> str:
         if isinstance(block, dict) and block.get("type") == "text":
             texts.append(block["text"])
     return "\n".join(texts)
+
+
+EXTRACT_RECIPE_SYSTEM_PROMPT = """あなたはレシピ整形の専門家です。
+以下の会話履歴を読んで、会話の中で最終的に決まった・提案されたレシピを抽出し、以下のMarkdown形式に整形してください。
+
+---
+# レシピ名
+
+## 基本情報
+- 調理時間: XX分
+- 人数: X人分
+- カテゴリ: （主菜・和食 / 主菜・洋食 / 主菜・中華 / 副菜 / 汁物 / ご飯・麺 / デザート など）
+- 難易度: （簡単 / 普通 / 難しい）
+
+## 材料
+- 材料名: 分量
+- ...
+
+## 手順
+1. 手順1
+2. 手順2
+...
+
+## ポイント
+- コツや注意点
+- ...
+---
+
+ルール：
+- 会話の中で最終的に「これにしよう」「このレシピで」と決まった料理を優先して抽出する
+- 複数のレシピが出てきた場合は、最後に決まったものを1つ抽出する
+- 会話に不足している情報（調理時間・カテゴリなど）は内容から推測して補完する
+- 絵文字・装飾文字は除去してシンプルなMarkdownにする
+- 材料は「- 食材名: 分量」の形式に統一する
+- 手順は番号付きリスト（1. 2. 3.）にする
+- 出力はMarkdownのみ。説明文は不要。
+
+また、最後の行に以下を追記してください（Markdownの外）：
+TITLE: レシピ名
+FILENAME: ファイル名（英数字とアンダースコアのみ、拡張子なし）
+
+会話の中にレシピが見つからない場合は「RECIPE_NOT_FOUND」とだけ出力してください。
+"""
+
+
+def extract_recipe_from_history(history: List[Message]) -> dict:
+    """
+    会話履歴からレシピを抽出してMarkdown形式に整形する。
+
+    Returns:
+        {found, markdown, suggested_title, suggested_filename}
+    """
+    if not history:
+        return {"found": False, "markdown": "", "suggested_title": "", "suggested_filename": ""}
+
+    conversation_text = "\n".join(
+        f"{'ユーザー' if msg.role == 'user' else 'アシスタント'}: {msg.content}"
+        for msg in history
+    )
+
+    client = get_bedrock_client()
+    response = client.invoke_model(
+        modelId=MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 3000,
+            "system": EXTRACT_RECIPE_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": conversation_text}],
+        }),
+    )
+
+    full_text = json.loads(response["body"].read())["content"][0]["text"].strip()
+
+    if full_text == "RECIPE_NOT_FOUND":
+        return {"found": False, "markdown": "", "suggested_title": "", "suggested_filename": ""}
+
+    lines = full_text.splitlines()
+    title = ""
+    filename = ""
+    markdown_lines = []
+
+    for line in lines:
+        if line.startswith("TITLE:"):
+            title = line.removeprefix("TITLE:").strip()
+        elif line.startswith("FILENAME:"):
+            filename = line.removeprefix("FILENAME:").strip()
+        else:
+            markdown_lines.append(line)
+
+    markdown = "\n".join(markdown_lines).strip()
+
+    if not title:
+        for line in markdown_lines:
+            if line.startswith("# "):
+                title = line.lstrip("# ").strip()
+                break
+
+    if not filename:
+        import re
+        filename = re.sub(r"[^\w]", "_", title.lower())[:40].strip("_") or "recipe"
+
+    return {
+        "found": True,
+        "markdown": markdown,
+        "suggested_title": title,
+        "suggested_filename": filename,
+    }

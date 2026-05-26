@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, List
-from ..models.schemas import AgentRequest, AgentResponse, ClearRequest, Message
-from ..services.agent import run_agent
+from ..models.schemas import AgentRequest, AgentResponse, ClearRequest, Message, ExtractRecipeRequest, ExtractRecipeResponse
+from ..services.agent import run_agent, extract_recipe_from_history
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -44,3 +44,24 @@ async def clear_agent_history(request: ClearRequest):
     """エージェントセッションの会話履歴をリセット"""
     agent_session_store.pop(request.session_id, None)
     return {"message": "エージェント履歴をリセットしました", "session_id": request.session_id}
+
+
+@router.post("/extract-recipe", response_model=ExtractRecipeResponse)
+async def extract_recipe(request: ExtractRecipeRequest):
+    """
+    指定セッションの会話履歴からレシピを抽出してMarkdown形式に返す。
+    フロントエンドでプレビュー・編集後に /recipes/upload で保存する想定。
+    """
+    history = agent_session_store.get(request.session_id, [])
+
+    try:
+        result = extract_recipe_from_history(history)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"レシピ抽出エラー: {str(e)}")
+
+    return ExtractRecipeResponse(
+        found=result["found"],
+        markdown=result["markdown"],
+        suggested_title=result["suggested_title"],
+        suggested_filename=result["suggested_filename"],
+    )

@@ -133,7 +133,7 @@ with st.sidebar:
             "鶏肉と豆腐がある。今日の夕食を提案して",
             "今週3日分の献立と買い物リストを作って。鶏肉・卵・玉ねぎはある",
             "20分以内でできる夕食レシピを教えて",
-            "昨日の夕食は唐揚げだった。栄養バランスを分析して改善案も教えて",
+            "昨日の夕食は唐揚げだった。栄養バランスを分析して改善点も教えて",
             "冷蔵庫に鮭・ほうれん草・豆腐がある。献立と不足食材リストを出して",
             "タンパク質多めのレシピがほしい",
         ]
@@ -142,12 +142,40 @@ with st.sidebar:
                 st.session_state.pending_agent_message = ex
 
         st.markdown("---")
+        if st.button("💾 この会話のレシピを登録", use_container_width=True, type="primary"):
+            if not st.session_state.agent_messages:
+                st.warning("会話履歴がありません")
+            else:
+                with st.spinner("会話からレシピを抽出中..."):
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/agent/extract-recipe",
+                            json={"session_id": st.session_state.session_id},
+                            timeout=60,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        if data["found"]:
+                            st.session_state["extracted_markdown"] = data["markdown"]
+                            st.session_state["extracted_title"] = data["suggested_title"]
+                            st.session_state["extracted_filename"] = data["suggested_filename"]
+                        else:
+                            st.warning("会話の中にレシピが見つかりませんでした。\nもう少し具体的なレシピが決まってから試してください。")
+                    except requests.exceptions.ConnectionError:
+                        st.error("バックエンドに接続できません。")
+                    except Exception as e:
+                        st.error(f"エラー: {str(e)}")
+
+        st.markdown("---")
         if st.button("🗑️ 会話をリセット", use_container_width=True, type="secondary"):
             requests.post(
                 f"{BACKEND_URL}/agent/clear",
                 json={"session_id": st.session_state.session_id},
             )
             st.session_state.agent_messages = []
+            st.session_state.pop("extracted_markdown", None)
+            st.session_state.pop("extracted_title", None)
+            st.session_state.pop("extracted_filename", None)
             st.rerun()
 
     st.caption(f"セッションID: `{st.session_state.session_id[:8]}...`")
@@ -215,6 +243,83 @@ if mode == "🤖 料理エージェント":
             "content": reply,
             "tools_used": tools_used,
         })
+
+
+# ---- 会話から抽出したレシピの登録エリア ----
+if mode == "🤖 料理エージェント" and st.session_state.get("extracted_markdown"):
+    st.markdown("---")
+    st.markdown("### 💾 抽出されたレシピを登録")
+    st.caption("会話から抽出したレシピです。内容を確認・編集してからS3に保存してください。")
+
+    col_l, col_r = st.columns([1, 1])
+    with col_l:
+        ext_title = st.text_input(
+            "レシピ名",
+            value=st.session_state.get("extracted_title", ""),
+            key="ext_title_input",
+        )
+        ext_filename = st.text_input(
+            "ファイル名（英数字・アンダースコア）",
+            value=st.session_state.get("extracted_filename", ""),
+            key="ext_filename_input",
+        )
+    with col_r:
+        st.markdown("**プレビュー**")
+        with st.expander("Markdownを表示", expanded=True):
+            st.markdown(st.session_state["extracted_markdown"])
+
+    ext_markdown = st.text_area(
+        "Markdownを編集（必要に応じて修正できます）",
+        value=st.session_state["extracted_markdown"],
+        height=300,
+        key="ext_md_edit",
+    )
+
+    col_save, col_cancel = st.columns([3, 1])
+    with col_save:
+        if st.button("💾 S3に保存してインデックスを更新", type="primary", use_container_width=True, key="btn_ext_save"):
+            if not ext_title.strip():
+                st.error("レシピ名を入力してください")
+            elif not ext_filename.strip():
+                st.error("ファイル名を入力してください")
+            else:
+                filename = ext_filename.strip()
+                if not filename.endswith(".md"):
+                    filename = f"{filename}.md"
+                with st.spinner("S3に保存してインデックスを再構築中...（30秒ほどかかります）"):
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/recipes/upload",
+                            json={
+                                "filename": filename,
+                                "title": ext_title,
+                                "content": ext_markdown,
+                            },
+                            timeout=120,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        if data["index_rebuilt"]:
+                            st.success(
+                                f"✅ {data['message']}\n\n"
+                                f"S3キー: `{data['s3_key']}`"
+                            )
+                            st.session_state.pop("extracted_markdown", None)
+                            st.session_state.pop("extracted_title", None)
+                            st.session_state.pop("extracted_filename", None)
+                            st.rerun()
+                        else:
+                            st.warning(data["message"])
+                    except requests.exceptions.ConnectionError:
+                        st.error("バックエンドに接続できません。")
+                    except Exception as e:
+                        st.error(f"エラー: {str(e)}")
+    with col_cancel:
+        if st.button("キャンセル", use_container_width=True, key="btn_ext_cancel"):
+            st.session_state.pop("extracted_markdown", None)
+            st.session_state.pop("extracted_title", None)
+            st.session_state.pop("extracted_filename", None)
+            st.rerun()
 
 
 # ==============================================================================
