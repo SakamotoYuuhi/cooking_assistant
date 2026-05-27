@@ -201,6 +201,12 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 if "agent_messages" not in st.session_state:
     st.session_state.agent_messages = []
+if "editing_recipe" not in st.session_state:
+    st.session_state.editing_recipe = None   # 編集中レシピのファイル名
+if "editing_content" not in st.session_state:
+    st.session_state.editing_content = ""
+if "editing_has_image" not in st.session_state:
+    st.session_state.editing_has_image = False
 
 # ==============================================================================
 # サイドバー（PC: 常時表示 / モバイル: ハンバーガーメニューで開く）
@@ -701,50 +707,229 @@ elif mode == "📖 レシピを追加":
 
     # ---------- 登録済みレシピ一覧 ----------
     with tab_list:
-        st.markdown("### S3に登録されているレシピ")
 
-        if st.button("🔄 一覧を更新", key="refresh_list"):
-            st.rerun()
+        # ============================================================
+        # 編集モード: 特定レシピを編集中の場合はフォームを全面表示
+        # ============================================================
+        if st.session_state.editing_recipe:
+            _editing_filename = st.session_state.editing_recipe
+            _editing_stem = _editing_filename.removesuffix(".md")
 
-        try:
-            resp = requests.get(f"{BACKEND_URL}/recipes", timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            recipes_list = data.get("recipes", [])
+            st.markdown(f"### ✏️ レシピを編集: `{_editing_filename}`")
+            st.caption("内容を編集してから「更新して保存」を押してください。画像の追加・差し替え・削除もここで行えます。")
 
-            if not recipes_list:
-                st.info("S3にレシピが登録されていません。「AIでテキスト変換」タブから追加してください。")
+            # タイトル入力
+            _edit_title = st.text_input(
+                "レシピ名 *",
+                value=st.session_state.get("editing_title", _editing_stem.replace("_", " ")),
+                key="edit_title_input",
+            )
+
+            # Markdown エディタ（左）＋ プレビュー（右）
+            col_edit_l, col_edit_r = st.columns([1, 1])
+            with col_edit_l:
+                _edit_content = st.text_area(
+                    "Markdownを編集 *",
+                    value=st.session_state.editing_content,
+                    height=400,
+                    key="edit_md_area",
+                )
+            with col_edit_r:
+                st.markdown("**プレビュー**")
+                with st.expander("Markdownを表示", expanded=True):
+                    st.markdown(_safe_md(_edit_content))
+
+            # 画像セクション
+            st.markdown("---")
+            st.markdown("##### 完成画像")
+
+            _has_image = st.session_state.editing_has_image
+            if _has_image:
+                st.info("現在この画像が登録されています。")
+                try:
+                    img_resp = requests.get(
+                        f"{BACKEND_URL}/recipes/{_editing_filename}/image",
+                        timeout=15,
+                    )
+                    if img_resp.ok:
+                        import base64 as _b64
+                        st.image(img_resp.content, caption="現在の画像", use_container_width=True)
+                except Exception:
+                    pass
+
+                _delete_image_flag = st.checkbox(
+                    "🗑️ 既存画像を削除する",
+                    key="edit_delete_image_check",
+                )
             else:
-                st.markdown(f"**合計 {len(recipes_list)} 件**")
-                for recipe in recipes_list:
-                    with st.expander(f"📄 {recipe['filename']}"):
-                        col_a, col_b = st.columns([2, 1])
-                        with col_a:
-                            st.markdown(f"**S3キー:** `{recipe['key']}`")
-                        with col_b:
-                            st.markdown(f"**更新日時:** {recipe['last_modified'][:19]}")
-                            st.markdown(f"**サイズ:** {recipe['size_bytes']} bytes")
+                st.caption("この画像はまだ登録されていません。以下から追加できます。")
+                _delete_image_flag = False
 
-                        if st.button("内容を表示", key=f"view_{recipe['filename']}"):
+            # 新しい画像の追加・AI生成
+            _new_image_b64 = _image_ui(
+                "edit",
+                recipe_title=_edit_title,
+                recipe_content=_edit_content,
+            )
+
+            st.markdown("---")
+            col_save_edit, col_cancel_edit = st.columns([3, 1])
+
+            with col_save_edit:
+                if st.button(
+                    "💾 更新して保存（インデックスも再構築）",
+                    type="primary",
+                    use_container_width=True,
+                    key="btn_edit_save",
+                ):
+                    if not _edit_title.strip():
+                        st.error("レシピ名を入力してください")
+                    elif not _edit_content.strip():
+                        st.error("Markdownが空です")
+                    else:
+                        with st.spinner("S3に保存してインデックスを再構築中...（30秒ほどかかります）"):
                             try:
-                                r = requests.get(
-                                    f"{BACKEND_URL}/recipes/{recipe['filename']}",
-                                    timeout=10,
+                                resp = requests.put(
+                                    f"{BACKEND_URL}/recipes/{_editing_filename}",
+                                    json={
+                                        "title": _edit_title.strip(),
+                                        "content": _edit_content,
+                                        "image_base64": _new_image_b64,
+                                        "image_ext": st.session_state.get("edit_image_ext", "jpg"),
+                                        "delete_image": _delete_image_flag,
+                                    },
+                                    timeout=120,
                                 )
-                                r.raise_for_status()
-                                rdata = r.json()
-                                st.markdown(_safe_md(rdata["content"]))
-                                if rdata.get("has_image"):
-                                    img_resp = requests.get(
-                                        f"{BACKEND_URL}/recipes/{recipe['filename']}/image",
-                                        timeout=15,
-                                    )
-                                    if img_resp.ok:
-                                        st.image(img_resp.content, caption="完成画像", use_container_width=True)
+                                resp.raise_for_status()
+                                data = resp.json()
+                                if data["index_rebuilt"]:
+                                    st.success(f"✅ {data['message']}")
+                                else:
+                                    st.warning(data["message"])
+                                # セッション状態をクリアして一覧に戻る
+                                st.session_state.editing_recipe = None
+                                st.session_state.editing_content = ""
+                                st.session_state.editing_has_image = False
+                                st.session_state.pop("editing_title", None)
+                                st.session_state.pop("edit_image_b64", None)
+                                st.session_state.pop("edit_image_ext", None)
+                                st.rerun()
+                            except requests.exceptions.ConnectionError:
+                                st.error("バックエンドに接続できません。")
                             except Exception as e:
-                                st.error(f"取得エラー: {e}")
+                                st.error(f"更新エラー: {str(e)}")
 
-        except requests.exceptions.ConnectionError:
-            st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
-        except Exception as e:
-            st.error(f"エラー: {str(e)}")
+            with col_cancel_edit:
+                if st.button("キャンセル", use_container_width=True, key="btn_edit_cancel"):
+                    st.session_state.editing_recipe = None
+                    st.session_state.editing_content = ""
+                    st.session_state.editing_has_image = False
+                    st.session_state.pop("editing_title", None)
+                    st.session_state.pop("edit_image_b64", None)
+                    st.session_state.pop("edit_image_ext", None)
+                    st.rerun()
+
+        # ============================================================
+        # 通常モード: レシピ一覧表示
+        # ============================================================
+        else:
+            st.markdown("### S3に登録されているレシピ")
+
+            if st.button("🔄 一覧を更新", key="refresh_list"):
+                st.rerun()
+
+            try:
+                resp = requests.get(f"{BACKEND_URL}/recipes", timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                recipes_list = data.get("recipes", [])
+
+                if not recipes_list:
+                    st.info("S3にレシピが登録されていません。「AIでテキスト変換」タブから追加してください。")
+                else:
+                    st.markdown(f"**合計 {len(recipes_list)} 件**")
+                    for recipe in recipes_list:
+                        with st.expander(f"📄 {recipe['filename']}"):
+                            col_meta_a, col_meta_b = st.columns([2, 1])
+                            with col_meta_a:
+                                st.markdown(f"**S3キー:** `{recipe['key']}`")
+                            with col_meta_b:
+                                st.markdown(f"**更新日時:** {recipe['last_modified'][:19]}")
+                                st.markdown(f"**サイズ:** {recipe['size_bytes']} bytes")
+
+                            col_btn_view, col_btn_edit, col_btn_del = st.columns([2, 2, 1])
+
+                            with col_btn_view:
+                                if st.button("👁️ 内容を表示", key=f"view_{recipe['filename']}"):
+                                    try:
+                                        r = requests.get(
+                                            f"{BACKEND_URL}/recipes/{recipe['filename']}",
+                                            timeout=10,
+                                        )
+                                        r.raise_for_status()
+                                        rdata = r.json()
+                                        st.markdown(_safe_md(rdata["content"]))
+                                        if rdata.get("has_image"):
+                                            img_resp = requests.get(
+                                                f"{BACKEND_URL}/recipes/{recipe['filename']}/image",
+                                                timeout=15,
+                                            )
+                                            if img_resp.ok:
+                                                st.image(img_resp.content, caption="完成画像", use_container_width=True)
+                                    except Exception as e:
+                                        st.error(f"取得エラー: {e}")
+
+                            with col_btn_edit:
+                                if st.button("✏️ 編集", key=f"edit_{recipe['filename']}", use_container_width=True):
+                                    try:
+                                        r = requests.get(
+                                            f"{BACKEND_URL}/recipes/{recipe['filename']}",
+                                            timeout=10,
+                                        )
+                                        r.raise_for_status()
+                                        rdata = r.json()
+                                        # タイトルを1行目（# レシピ名）から抽出
+                                        _lines = rdata["content"].splitlines()
+                                        _extracted_title = next(
+                                            (l.lstrip("# ").strip() for l in _lines if l.startswith("# ")),
+                                            recipe["filename"].removesuffix(".md").replace("_", " "),
+                                        )
+                                        st.session_state.editing_recipe = recipe["filename"]
+                                        st.session_state.editing_content = rdata["content"]
+                                        st.session_state.editing_has_image = rdata.get("has_image", False)
+                                        st.session_state["editing_title"] = _extracted_title
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"読み込みエラー: {e}")
+
+                            with col_btn_del:
+                                if st.button("🗑️", key=f"del_{recipe['filename']}", help="削除", use_container_width=True):
+                                    st.session_state[f"confirm_delete_{recipe['filename']}"] = True
+
+                            # 削除確認ダイアログ
+                            if st.session_state.get(f"confirm_delete_{recipe['filename']}"):
+                                st.warning(f"**「{recipe['filename']}」を削除しますか？** この操作は元に戻せません。")
+                                col_yes, col_no = st.columns([1, 1])
+                                with col_yes:
+                                    if st.button("はい、削除する", key=f"yes_del_{recipe['filename']}", type="primary"):
+                                        with st.spinner("削除中..."):
+                                            try:
+                                                del_resp = requests.delete(
+                                                    f"{BACKEND_URL}/recipes/{recipe['filename']}",
+                                                    timeout=120,
+                                                )
+                                                del_resp.raise_for_status()
+                                                st.success(f"「{recipe['filename']}」を削除しました")
+                                                st.session_state.pop(f"confirm_delete_{recipe['filename']}", None)
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"削除エラー: {e}")
+                                with col_no:
+                                    if st.button("キャンセル", key=f"no_del_{recipe['filename']}"):
+                                        st.session_state.pop(f"confirm_delete_{recipe['filename']}", None)
+                                        st.rerun()
+
+            except requests.exceptions.ConnectionError:
+                st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
+            except Exception as e:
+                st.error(f"エラー: {str(e)}")

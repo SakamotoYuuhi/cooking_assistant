@@ -22,7 +22,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..services.s3_storage import upload_recipe, list_recipes, get_recipe, upload_recipe_image, get_recipe_image, recipe_image_exists
+from ..services.s3_storage import (
+    upload_recipe, list_recipes, get_recipe,
+    upload_recipe_image, get_recipe_image, recipe_image_exists,
+    delete_recipe, delete_recipe_image,
+)
 from ..services.rag import reload_index
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
@@ -55,6 +59,33 @@ class RecipeUploadResponse(BaseModel):
     index_rebuilt: bool
     message: str
     image_s3_key: Optional[str] = None
+
+
+class RecipeUpdateRequest(BaseModel):
+    title: str
+    content: str
+    image_base64: Optional[str] = None
+    image_ext: str = "jpg"
+    delete_image: bool = False
+
+
+class RecipeUpdateResponse(BaseModel):
+    s3_key: str
+    filename: str
+    index_rebuilt: bool
+    message: str
+    image_s3_key: Optional[str] = None
+    image_deleted: bool = False
+
+
+class RecipeImageUpdateRequest(BaseModel):
+    image_base64: str
+    image_ext: str = "jpg"
+
+
+class RecipeImageUpdateResponse(BaseModel):
+    image_s3_key: str
+    message: str
 
 
 class GenerateImageRequest(BaseModel):
@@ -380,6 +411,155 @@ async def get_recipe_content(filename: str):
         return {"filename": filename, "content": content, "has_image": has_image}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"レシピが見つかりません: {e}")
+
+
+@router.put("/{filename}", response_model=RecipeUpdateResponse)
+async def update_recipe(filename: str, request: RecipeUpdateRequest):
+    """
+    既存レシピのMarkdown内容を上書き更新する。
+    画像を同時に更新・削除することも可能。
+    更新後はFAISSインデックスを自動再構築する。
+
+    - delete_image=True の場合、既存画像をS3から削除する
+    - image_base64 が指定された場合、画像を新規追加・差し替えする
+    """
+    if not filename.endswith(".md"):
+        filename = f"{filename}.md"
+
+    # レシピ本文の存在確認
+    try:
+        get_recipe(filename)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"レシピ '{filename}' が見つかりません")
+
+    # Markdown を上書き保存
+    try:
+        s3_key = upload_recipe(filename, request.content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3更新エラー: {e}")
+
+    filename_stem = filename.removesuffix(".md")
+    image_s3_key = None
+    image_deleted = False
+
+    # 画像削除が要求されている場合
+    if request.delete_image:
+        try:
+            image_deleted = delete_recipe_image(filename_stem)
+        except Exception:
+            pass
+
+    # 新しい画像がある場合はアップロード（削除後でも上書きアップ可能）
+    if request.image_base64:
+        try:
+            image_bytes = base64.b64decode(request.image_base64)
+            image_s3_key = upload_recipe_image(filename_stem, image_bytes, request.image_ext)
+        except Exception as e:
+            image_s3_key = None
+
+    # インデックス再構築
+    index_rebuilt = False
+    try:
+        index_rebuilt = _rebuild_index()
+    except RuntimeError as e:
+        return RecipeUpdateResponse(
+            s3_key=s3_key,
+            filename=filename,
+            index_rebuilt=False,
+            image_s3_key=image_s3_key,
+            image_deleted=image_deleted,
+            message=f"S3への更新は成功しましたが、インデックス再構築に失敗しました: {e}",
+        )
+
+    msg = f"レシピ「{request.title}」を更新し、インデックスを再構築しました"
+    if image_s3_key:
+        msg += "（画像も更新しました）"
+    elif image_deleted:
+        msg += "（画像を削除しました）"
+
+    return RecipeUpdateResponse(
+        s3_key=s3_key,
+        filename=filename,
+        index_rebuilt=index_rebuilt,
+        image_s3_key=image_s3_key,
+        image_deleted=image_deleted,
+        message=msg,
+    )
+
+
+@router.post("/{filename}/image", response_model=RecipeImageUpdateResponse)
+async def update_recipe_image_endpoint(filename: str, request: RecipeImageUpdateRequest):
+    """
+    既存レシピに画像を追加・差し替えする。
+    レシピ本文の更新は行わず、画像のみ更新する（インデックス再構築不要）。
+    """
+    if not filename.endswith(".md"):
+        filename = f"{filename}.md"
+
+    # レシピ存在確認
+    try:
+        get_recipe(filename)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"レシピ '{filename}' が見つかりません")
+
+    filename_stem = filename.removesuffix(".md")
+    try:
+        image_bytes = base64.b64decode(request.image_base64)
+        image_s3_key = upload_recipe_image(filename_stem, image_bytes, request.image_ext)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"画像アップロードエラー: {e}")
+
+    return RecipeImageUpdateResponse(
+        image_s3_key=image_s3_key,
+        message=f"レシピ '{filename}' の画像を更新しました",
+    )
+
+
+@router.delete("/{filename}/image")
+async def delete_recipe_image_endpoint(filename: str):
+    """既存レシピの画像をS3から削除する"""
+    filename_stem = filename.removesuffix(".md")
+    deleted = delete_recipe_image(filename_stem)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="画像が見つかりません")
+    return {"message": f"レシピ '{filename}' の画像を削除しました"}
+
+
+@router.delete("/{filename}")
+async def delete_recipe_endpoint(filename: str):
+    """
+    レシピをS3から削除し、FAISSインデックスを再構築する。
+    関連する画像も同時に削除する。
+    """
+    if not filename.endswith(".md"):
+        filename = f"{filename}.md"
+
+    # レシピ存在確認
+    try:
+        get_recipe(filename)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"レシピ '{filename}' が見つかりません")
+
+    # レシピ削除
+    try:
+        delete_recipe(filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3削除エラー: {e}")
+
+    # 画像も削除（存在しない場合はスキップ）
+    filename_stem = filename.removesuffix(".md")
+    delete_recipe_image(filename_stem)
+
+    # インデックス再構築
+    try:
+        _rebuild_index()
+    except RuntimeError as e:
+        return {
+            "message": f"レシピ '{filename}' を削除しましたが、インデックス再構築に失敗しました: {e}",
+            "index_rebuilt": False,
+        }
+
+    return {"message": f"レシピ '{filename}' を削除し、インデックスを更新しました", "index_rebuilt": True}
 
 
 @router.get("/{filename}/image")
