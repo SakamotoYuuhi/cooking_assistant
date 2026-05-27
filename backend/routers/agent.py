@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from typing import Dict, List
+from typing import List
 from ..models.schemas import AgentRequest, AgentResponse, ClearRequest, Message, ExtractRecipeRequest, ExtractRecipeResponse
 from ..services.agent import run_agent, extract_recipe_from_history
+from ..services.session_store import get_session, save_session, delete_session
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-# エージェント用セッションストア（chatとは別管理）
-agent_session_store: Dict[str, List[Message]] = {}
+_PREFIX = "agent"
 
 
 @router.post("", response_model=AgentResponse)
@@ -16,11 +16,7 @@ async def agent_chat(request: AgentRequest):
     Claudeが自律的にツールを選択・実行して回答を生成する。
     """
     session_id = request.session_id
-
-    if session_id not in agent_session_store:
-        agent_session_store[session_id] = []
-
-    history = agent_session_store[session_id]
+    history = get_session(session_id, _PREFIX)
 
     try:
         reply, tools_used = run_agent(history, request.message)
@@ -29,7 +25,7 @@ async def agent_chat(request: AgentRequest):
 
     history.append(Message(role="user", content=request.message))
     history.append(Message(role="assistant", content=reply))
-    agent_session_store[session_id] = history
+    save_session(session_id, _PREFIX, history)
 
     return AgentResponse(
         session_id=session_id,
@@ -42,7 +38,7 @@ async def agent_chat(request: AgentRequest):
 @router.post("/clear")
 async def clear_agent_history(request: ClearRequest):
     """エージェントセッションの会話履歴をリセット"""
-    agent_session_store.pop(request.session_id, None)
+    delete_session(request.session_id, _PREFIX)
     return {"message": "エージェント履歴をリセットしました", "session_id": request.session_id}
 
 
@@ -52,7 +48,7 @@ async def extract_recipe(request: ExtractRecipeRequest):
     指定セッションの会話履歴からレシピを抽出してMarkdown形式に返す。
     フロントエンドでプレビュー・編集後に /recipes/upload で保存する想定。
     """
-    history = agent_session_store.get(request.session_id, [])
+    history = get_session(request.session_id, _PREFIX)
 
     try:
         result = extract_recipe_from_history(history)

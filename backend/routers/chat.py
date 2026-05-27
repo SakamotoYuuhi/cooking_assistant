@@ -1,25 +1,20 @@
 from fastapi import APIRouter, HTTPException
-from typing import Dict, List
+from typing import List
 from ..models.schemas import ChatRequest, ChatResponse, ClearRequest, Message
 from ..services.bedrock import chat_with_bedrock
 from ..services.rag import search_recipes, build_rag_context
+from ..services.session_store import get_session, save_session, delete_session
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# セッションIDをキーにした会話履歴のインメモリストア
-# 本番ではDynamoDBやRedisに置き換える
-session_store: Dict[str, List[Message]] = {}
+_PREFIX = "chat"
 
 
 @router.post("", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """ユーザーのメッセージを受け取り、RAGで関連レシピを検索してBedrockに投げて返答を返す"""
     session_id = request.session_id
-
-    if session_id not in session_store:
-        session_store[session_id] = []
-
-    history = session_store[session_id]
+    history = get_session(session_id, _PREFIX)
 
     # RAGでレシピ検索（インデックス未構築の場合はスキップしてフォールバック）
     rag_context = ""
@@ -41,10 +36,10 @@ async def chat(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock呼び出しエラー: {str(e)}")
 
-    # 履歴を更新
+    # 履歴を更新してDynamoDBに保存
     history.append(Message(role="user", content=request.message))
     history.append(Message(role="assistant", content=reply))
-    session_store[session_id] = history
+    save_session(session_id, _PREFIX, history)
 
     return ChatResponse(
         session_id=session_id,
@@ -56,11 +51,11 @@ async def chat(request: ChatRequest):
 @router.post("/clear")
 async def clear_history(request: ClearRequest):
     """指定セッションの会話履歴をリセットする"""
-    session_store.pop(request.session_id, None)
+    delete_session(request.session_id, _PREFIX)
     return {"message": "会話履歴をリセットしました", "session_id": request.session_id}
 
 
 @router.get("/history/{session_id}", response_model=List[Message])
 async def get_history(session_id: str):
     """指定セッションの会話履歴を取得する"""
-    return session_store.get(session_id, [])
+    return get_session(session_id, _PREFIX)
