@@ -75,36 +75,45 @@ def save_session(session_id: str, prefix: str, history: List[Message]) -> None:
     """
     会話履歴をDynamoDBに保存する。
     既存のアイテムは上書きされる。TTLは保存のたびにリセットされる。
+    DynamoDB未設定・権限不足・接続エラー時はスキップして処理を続行する。
 
     Args:
         session_id: フロントエンドのセッションID
         prefix:     "chat" または "agent"
         history:    保存する会話履歴
     """
-    client = _get_client()
-    ttl = int(time.time()) + SESSION_TTL_DAYS * 24 * 60 * 60
-    history_data = [{"role": m.role, "content": m.content} for m in history]
-    client.put_item(
-        TableName=_table_name(),
-        Item={
-            "session_key": {"S": _session_key(session_id, prefix)},
-            "history": {"S": json.dumps(history_data, ensure_ascii=False)},
-            "ttl": {"N": str(ttl)},
-            "updated_at": {"S": datetime.now(timezone.utc).isoformat()},
-        },
-    )
+    try:
+        client = _get_client()
+        ttl = int(time.time()) + SESSION_TTL_DAYS * 24 * 60 * 60
+        history_data = [{"role": m.role, "content": m.content} for m in history]
+        client.put_item(
+            TableName=_table_name(),
+            Item={
+                "session_key": {"S": _session_key(session_id, prefix)},
+                "history": {"S": json.dumps(history_data, ensure_ascii=False)},
+                "ttl": {"N": str(ttl)},
+                "updated_at": {"S": datetime.now(timezone.utc).isoformat()},
+            },
+        )
+    except Exception:
+        # DynamoDB未設定・権限不足・接続エラー時はスキップ（会話は続行）
+        pass
 
 
 def delete_session(session_id: str, prefix: str) -> None:
     """
     会話履歴をDynamoDBから削除する。
+    DynamoDB未設定・権限不足・接続エラー時はスキップして処理を続行する。
 
     Args:
         session_id: フロントエンドのセッションID
         prefix:     "chat" または "agent"
     """
-    client = _get_client()
-    client.delete_item(
-        TableName=_table_name(),
-        Key={"session_key": {"S": _session_key(session_id, prefix)}},
-    )
+    try:
+        client = _get_client()
+        client.delete_item(
+            TableName=_table_name(),
+            Key={"session_key": {"S": _session_key(session_id, prefix)}},
+        )
+    except Exception:
+        pass
