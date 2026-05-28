@@ -197,10 +197,38 @@ def _image_ui(key_prefix: str, recipe_title: str = "", recipe_content: str = "")
 # ==============================================================================
 # セッション初期化
 # ==============================================================================
+# session_id をURLパラメータで永続化する
+# リロード後もURLに ?session_id=xxx が残るため同じ履歴を復元できる
+_restored_from_url = False
 if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
+    params = st.query_params
+    if "session_id" in params:
+        st.session_state.session_id = params["session_id"]
+        _restored_from_url = True
+    else:
+        st.session_state.session_id = str(uuid.uuid4())
+st.query_params["session_id"] = st.session_state.session_id
+
 if "agent_messages" not in st.session_state:
-    st.session_state.agent_messages = []
+    # URLからsession_idを復元した場合はDynamoDBから会話履歴を取得して復元する
+    if _restored_from_url:
+        try:
+            _hist_resp = requests.get(
+                f"{BACKEND_URL}/agent/history/{st.session_state.session_id}",
+                timeout=10,
+            )
+            if _hist_resp.ok:
+                _hist_data = _hist_resp.json()
+                st.session_state.agent_messages = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in _hist_data
+                ]
+            else:
+                st.session_state.agent_messages = []
+        except Exception:
+            st.session_state.agent_messages = []
+    else:
+        st.session_state.agent_messages = []
 if "editing_recipe" not in st.session_state:
     st.session_state.editing_recipe = None   # 編集中レシピのファイル名
 if "editing_content" not in st.session_state:

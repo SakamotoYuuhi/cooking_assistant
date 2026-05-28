@@ -5,7 +5,7 @@ from pathlib import Path
 from .routers import chat, agent, business, recipes
 
 # プロジェクトルートの .env を明示的に読み込む
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env", override=True)
 
 app = FastAPI(
     title="AI料理アシスタント API",

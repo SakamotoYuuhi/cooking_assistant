@@ -42,6 +42,12 @@ async def clear_agent_history(request: ClearRequest):
     return {"message": "エージェント履歴をリセットしました", "session_id": request.session_id}
 
 
+@router.get("/history/{session_id}", response_model=List[Message])
+async def get_agent_history(session_id: str):
+    """指定セッションのエージェント会話履歴を取得する（フロントエンドのリロード復元用）"""
+    return get_session(session_id, _PREFIX)
+
+
 @router.post("/extract-recipe", response_model=ExtractRecipeResponse)
 async def extract_recipe(request: ExtractRecipeRequest):
     """
