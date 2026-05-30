@@ -34,11 +34,11 @@ st.markdown("""
 }
 
 /* =========================================================
-   PC / タブレット レイアウト（431px 以上）: 変更なし
+   PC / タブレット レイアウト（431px 以上）
    ========================================================= */
 @media (min-width: 431px) {
     .block-container {
-        padding-top: 1rem !important;
+        padding-top: 3.5rem !important;
     }
 }
 
@@ -864,9 +864,6 @@ elif mode == "📖 レシピを追加":
         else:
             st.markdown("### S3に登録されているレシピ")
 
-            if st.button("🔄 一覧を更新", key="refresh_list"):
-                st.rerun()
-
             try:
                 resp = requests.get(f"{BACKEND_URL}/recipes", timeout=15)
                 resp.raise_for_status()
@@ -878,9 +875,11 @@ elif mode == "📖 レシピを追加":
                 else:
                     st.markdown(f"**合計 {len(recipes_list)} 件**")
                     for recipe in recipes_list:
-                        with st.expander(f"📄 {recipe['filename']}"):
+                        display_title = recipe.get("title") or recipe["filename"].removesuffix(".md").replace("_", " ")
+                        with st.expander(f"🍽️ {display_title}"):
                             col_meta_a, col_meta_b = st.columns([2, 1])
                             with col_meta_a:
+                                st.markdown(f"**ファイル名:** `{recipe['filename']}`")
                                 st.markdown(f"**S3キー:** `{recipe['key']}`")
                             with col_meta_b:
                                 st.markdown(f"**更新日時:** {recipe['last_modified'][:19]}")
@@ -937,7 +936,7 @@ elif mode == "📖 レシピを追加":
 
                             # 削除確認ダイアログ
                             if st.session_state.get(f"confirm_delete_{recipe['filename']}"):
-                                st.warning(f"**「{recipe['filename']}」を削除しますか？** この操作は元に戻せません。")
+                                st.warning(f"**「{display_title}」を削除しますか？** この操作は元に戻せません。")
                                 col_yes, col_no = st.columns([1, 1])
                                 with col_yes:
                                     if st.button("はい、削除する", key=f"yes_del_{recipe['filename']}", type="primary"):
@@ -948,7 +947,7 @@ elif mode == "📖 レシピを追加":
                                                     timeout=120,
                                                 )
                                                 del_resp.raise_for_status()
-                                                st.success(f"「{recipe['filename']}」を削除しました")
+                                                st.success(f"「{display_title}」を削除しました")
                                                 st.session_state.pop(f"confirm_delete_{recipe['filename']}", None)
                                                 st.rerun()
                                             except Exception as e:

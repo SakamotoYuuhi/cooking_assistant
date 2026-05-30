@@ -61,23 +61,43 @@ def upload_recipe(filename: str, content: str) -> str:
     return key
 
 
+def _extract_title_from_markdown(content: str, fallback: str) -> str:
+    """Markdownの先頭 `# タイトル` 行からレシピ名を抽出する。見つからない場合は fallback を返す。"""
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+    return fallback
+
+
 def list_recipes() -> List[dict]:
     """
-    S3上のレシピ一覧を返す。
+    S3上のレシピ一覧を返す。各ファイルの先頭512バイトを取得してタイトルを抽出する。
 
     Returns:
-        [{"filename": ..., "key": ..., "last_modified": ...}, ...]
+        [{"filename": ..., "title": ..., "key": ..., "last_modified": ...}, ...]
     """
     s3 = _get_s3_client()
     prefix = _prefix()
-    response = s3.list_objects_v2(Bucket=_bucket(), Prefix=prefix)
+    bucket = _bucket()
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
     recipes = []
     for obj in response.get("Contents", []):
         key = obj["Key"]
         if key == prefix:
             continue
+        filename = key.removeprefix(prefix)
+        fallback_title = filename.removesuffix(".md").replace("_", " ")
+        # 先頭512バイトだけ取得してタイトル行を探す（コスト・レイテンシ削減）
+        try:
+            head_resp = s3.get_object(Bucket=bucket, Key=key, Range="bytes=0-511")
+            head_content = head_resp["Body"].read().decode("utf-8", errors="replace")
+            title = _extract_title_from_markdown(head_content, fallback_title)
+        except Exception:
+            title = fallback_title
         recipes.append({
-            "filename": key.removeprefix(prefix),
+            "filename": filename,
+            "title": title,
             "key": key,
             "last_modified": obj["LastModified"].isoformat(),
             "size_bytes": obj["Size"],
