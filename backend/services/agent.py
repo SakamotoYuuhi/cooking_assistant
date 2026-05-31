@@ -31,9 +31,9 @@ try:
             secret_key=_lf_secret,
             host=_lf_host,
         )
-        logger.info("Langfuse トレーシングが有効です")
+        logger.info("Langfuse トレーシングが有効です (host=%s)", _lf_host)
     else:
-        logger.info("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY が未設定のため、トレーシングを無効化します")
+        logger.info("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY が未設定のためトレーシングを無効化します")
 except ImportError:
     logger.warning("langfuse パッケージが見つかりません。pip install langfuse でインストールしてください")
 
@@ -78,136 +78,129 @@ def run_agent(history: List[Message], user_message: str, session_id: str = "") -
 
     tool_use_log = []  # どのツールが呼ばれたか記録
 
-    # Langfuse トレース開始
-    trace = None
-    if _langfuse:
-        trace = _langfuse.trace(
-            name="agent-run",
-            input=user_message,
-            session_id=session_id or None,
-            metadata={"model": MODEL_ID, "history_length": len(history)},
-        )
+    def _do_agent_loop():
+        """エージェントループ本体（Langfuseトレースの内外で共用）"""
+        total_input_tokens = 0
+        total_output_tokens = 0
 
-    total_input_tokens = 0
-    total_output_tokens = 0
-
-    try:
         for iteration in range(MAX_ITERATIONS):
-            # LLM呼び出しのスパンを記録
-            generation = None
-            if trace:
-                generation = trace.generation(
+            # LLM 呼び出し
+            if _langfuse:
+                with _langfuse.start_as_current_observation(
                     name=f"bedrock-invoke-{iteration}",
+                    as_type="generation",
                     model=MODEL_ID,
                     input=messages,
+                ):
+                    response = client.invoke_model(
+                        modelId=MODEL_ID,
+                        contentType="application/json",
+                        accept="application/json",
+                        body=json.dumps({
+                            "anthropic_version": "bedrock-2023-05-31",
+                            "max_tokens": 4096,
+                            "system": AGENT_SYSTEM_PROMPT,
+                            "tools": TOOL_DEFINITIONS,
+                            "messages": messages,
+                        }),
+                    )
+                    result = json.loads(response["body"].read())
+                    usage = result.get("usage", {})
+                    _langfuse.update_current_generation(
+                        output=_extract_text(result["content"]) or "(tool_use)",
+                        usage_details={
+                            "input": usage.get("input_tokens", 0),
+                            "output": usage.get("output_tokens", 0),
+                        },
+                        metadata={"stop_reason": result["stop_reason"], "iteration": iteration},
+                    )
+            else:
+                response = client.invoke_model(
+                    modelId=MODEL_ID,
+                    contentType="application/json",
+                    accept="application/json",
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 4096,
+                        "system": AGENT_SYSTEM_PROMPT,
+                        "tools": TOOL_DEFINITIONS,
+                        "messages": messages,
+                    }),
                 )
+                result = json.loads(response["body"].read())
 
-            response = client.invoke_model(
-                modelId=MODEL_ID,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps({
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 4096,
-                    "system": AGENT_SYSTEM_PROMPT,
-                    "tools": TOOL_DEFINITIONS,
-                    "messages": messages,
-                }),
-            )
-
-            result = json.loads(response["body"].read())
             stop_reason = result["stop_reason"]
             content_blocks = result["content"]
-
-            # トークン使用量を集計
             usage = result.get("usage", {})
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
-            total_input_tokens += input_tokens
-            total_output_tokens += output_tokens
+            total_input_tokens += usage.get("input_tokens", 0)
+            total_output_tokens += usage.get("output_tokens", 0)
 
-            if generation:
-                generation.end(
-                    output=_extract_text(content_blocks) or str(content_blocks),
-                    usage={"input": input_tokens, "output": output_tokens},
-                    metadata={"stop_reason": stop_reason, "iteration": iteration},
-                )
-
-            # アシスタントの返答をメッセージ履歴に追加
             messages.append({"role": "assistant", "content": content_blocks})
 
-            # ツール呼び出しがなければ終了
             if stop_reason == "end_turn":
                 final_text = _extract_text(content_blocks)
-                if trace:
-                    trace.update(
-                        output=final_text,
-                        metadata={
-                            "total_input_tokens": total_input_tokens,
-                            "total_output_tokens": total_output_tokens,
-                            "iterations": iteration + 1,
-                            "tools_used": [t["tool"] for t in tool_use_log],
-                        },
-                    )
-                return final_text, tool_use_log
+                return final_text, total_input_tokens, total_output_tokens
 
-            # ツール呼び出しがある場合
             if stop_reason == "tool_use":
                 tool_results = []
-
                 for block in content_blocks:
                     if block.get("type") != "tool_use":
                         continue
-
                     tool_name = block["name"]
                     tool_input = block["input"]
                     tool_use_id = block["id"]
 
-                    # ツール実行スパンを記録
-                    tool_span = None
-                    if trace:
-                        tool_span = trace.span(
+                    if _langfuse:
+                        with _langfuse.start_as_current_observation(
                             name=f"tool-{tool_name}",
+                            as_type="tool",
                             input=tool_input,
-                            metadata={"tool_use_id": tool_use_id},
-                        )
-
-                    # ツールを実行
-                    tool_output = execute_tool(tool_name, tool_input)
-
-                    if tool_span:
-                        tool_span.end(output=tool_output[:500])
+                        ):
+                            tool_output = execute_tool(tool_name, tool_input)
+                            _langfuse.update_current_span(output=tool_output[:500])
+                    else:
+                        tool_output = execute_tool(tool_name, tool_input)
 
                     tool_use_log.append({
                         "tool": tool_name,
                         "input": tool_input,
                         "output_preview": tool_output[:100] + "..." if len(tool_output) > 100 else tool_output,
                     })
-
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
                         "content": tool_output,
                     })
-
-                # ツール実行結果をメッセージに追加して次のループへ
                 messages.append({"role": "user", "content": tool_results})
 
-        if trace:
-            trace.update(output="エージェントの最大反復回数に達しました。")
-        return "エージェントの最大反復回数に達しました。", tool_use_log
+        return "エージェントの最大反復回数に達しました。", total_input_tokens, total_output_tokens
 
-    except Exception as e:
-        if trace:
-            trace.update(
-                output=f"エラー: {str(e)}",
-                metadata={"error": str(e)},
-                level="ERROR",
-            )
-        raise
-    finally:
-        if _langfuse:
+    if _langfuse:
+        try:
+            with _langfuse.start_as_current_observation(
+                name="agent-run",
+                as_type="agent",
+                input=user_message,
+                metadata={"model": MODEL_ID, "history_length": len(history), "session_id": session_id},
+            ):
+                final_text, in_tok, out_tok = _do_agent_loop()
+                _langfuse.set_current_trace_io(input=user_message, output=final_text)
+                _langfuse.update_current_span(
+                    metadata={
+                        "total_input_tokens": in_tok,
+                        "total_output_tokens": out_tok,
+                        "tools_used": [t["tool"] for t in tool_use_log],
+                    }
+                )
+        except Exception as e:
             _langfuse.flush()
+            raise
+        finally:
+            _langfuse.flush()
+    else:
+        final_text, _, _ = _do_agent_loop()
+
+    return final_text, tool_use_log
 
 
 def _extract_text(content_blocks: list) -> str:
@@ -279,41 +272,42 @@ def extract_recipe_from_history(history: List[Message]) -> dict:
         for msg in history
     )
 
-    # Langfuse トレース
-    trace = None
-    generation = None
-    if _langfuse:
-        trace = _langfuse.trace(name="extract-recipe", input=conversation_text[:500])
-        generation = trace.generation(
-            name="bedrock-extract-recipe",
-            model=MODEL_ID,
-            input=[{"role": "user", "content": conversation_text}],
-        )
-
     client = get_bedrock_client()
-    response = client.invoke_model(
-        modelId=MODEL_ID,
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 3000,
-            "system": EXTRACT_RECIPE_SYSTEM_PROMPT,
-            "messages": [{"role": "user", "content": conversation_text}],
-        }),
-    )
 
-    result_body = json.loads(response["body"].read())
-    full_text = result_body["content"][0]["text"].strip()
-
-    if generation:
-        usage = result_body.get("usage", {})
-        generation.end(
-            output=full_text[:500],
-            usage={"input": usage.get("input_tokens", 0), "output": usage.get("output_tokens", 0)},
+    def _invoke_extract():
+        response = client.invoke_model(
+            modelId=MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 3000,
+                "system": EXTRACT_RECIPE_SYSTEM_PROMPT,
+                "messages": [{"role": "user", "content": conversation_text}],
+            }),
         )
+        return json.loads(response["body"].read())
+
     if _langfuse:
-        _langfuse.flush()
+        try:
+            with _langfuse.start_as_current_observation(name="extract-recipe", as_type="agent", input=conversation_text[:500]):
+                with _langfuse.start_as_current_observation(name="bedrock-extract-recipe", as_type="generation", model=MODEL_ID):
+                    result_body = _invoke_extract()
+                    full_text = result_body["content"][0]["text"].strip()
+                    usage = result_body.get("usage", {})
+                    _langfuse.update_current_generation(
+                        output=full_text[:500],
+                        usage_details={
+                            "input": usage.get("input_tokens", 0),
+                            "output": usage.get("output_tokens", 0),
+                        },
+                    )
+                _langfuse.set_current_trace_io(input=conversation_text[:200], output=full_text[:200])
+        finally:
+            _langfuse.flush()
+    else:
+        result_body = _invoke_extract()
+        full_text = result_body["content"][0]["text"].strip()
 
     if full_text == "RECIPE_NOT_FOUND":
         return {"found": False, "markdown": "", "suggested_title": "", "suggested_filename": ""}
