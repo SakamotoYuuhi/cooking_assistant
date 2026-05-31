@@ -9,3 +9,4 @@ requests
 pydantic
 faiss-cpu
 watchtower
+langfuse

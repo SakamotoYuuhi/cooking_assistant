@@ -19,7 +19,7 @@ async def agent_chat(request: AgentRequest):
     history = get_session(session_id, _PREFIX)
 
     try:
-        reply, tools_used = run_agent(history, request.message)
+        reply, tools_used = run_agent(history, request.message, session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"エージェント実行エラー: {str(e)}")
 
