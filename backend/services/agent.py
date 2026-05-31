@@ -22,9 +22,13 @@ logger = logging.getLogger(__name__)
 _langfuse = None
 try:
     from langfuse import Langfuse
-    _lf_public = os.getenv("LANGFUSE_PUBLIC_KEY")
-    _lf_secret = os.getenv("LANGFUSE_SECRET_KEY")
-    _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    from .ssm_config import get_config
+
+    # 環境変数 → SSM の順でキーを取得
+    _lf_public = get_config("LANGFUSE_PUBLIC_KEY")
+    _lf_secret = get_config("LANGFUSE_SECRET_KEY")
+    _lf_host   = get_config("LANGFUSE_HOST") or "https://cloud.langfuse.com"
+
     if _lf_public and _lf_secret:
         _langfuse = Langfuse(
             public_key=_lf_public,
@@ -33,7 +37,7 @@ try:
         )
         logger.info("Langfuse トレーシングが有効です (host=%s)", _lf_host)
     else:
-        logger.info("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY が未設定のためトレーシングを無効化します")
+        logger.info("LANGFUSE キーが環境変数・SSM のどちらにも見つからないためトレーシングを無効化します")
 except ImportError:
     logger.warning("langfuse パッケージが見つかりません。pip install langfuse でインストールしてください")
 
