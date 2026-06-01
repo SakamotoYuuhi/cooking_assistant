@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from ..services.ssm_config import get_config
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger("cooking_assistant")
@@ -21,9 +22,9 @@ _BUILD_SCRIPT = _PROJECT_DIR / "scripts" / "build_index.py"
 
 
 def _api_key_valid(api_key: str | None) -> bool:
-    expected = os.getenv("REBUILD_API_KEY", "")
+    expected = get_config("REBUILD_API_KEY", "")
     if not expected:
-        logger.warning("REBUILD_API_KEY が未設定です。/admin/rebuild-index は無効化されています。")
+        logger.warning("REBUILD_API_KEY が環境変数・SSMのどちらにも見つかりません。/admin/rebuild-index は無効化されています。")
         return False
     return api_key == expected
 

@@ -25,6 +25,7 @@ _ENV_TO_SSM: dict[str, str] = {
     "LANGFUSE_PUBLIC_KEY": f"{_SSM_PREFIX}/langfuse/public-key",
     "LANGFUSE_SECRET_KEY": f"{_SSM_PREFIX}/langfuse/secret-key",
     "LANGFUSE_HOST":       f"{_SSM_PREFIX}/langfuse/host",
+    "REBUILD_API_KEY":     f"{_SSM_PREFIX}/rebuild-api-key",
 }
 
 
