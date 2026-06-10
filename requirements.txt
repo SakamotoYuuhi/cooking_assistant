@@ -10,3 +10,6 @@ pydantic
 faiss-cpu
 watchtower
 langfuse
+trafilatura
+beautifulsoup4
+lxml

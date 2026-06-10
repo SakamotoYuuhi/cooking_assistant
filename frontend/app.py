@@ -467,8 +467,53 @@ elif mode == "📖 レシピを追加":
 
     # ---------- AIでテキスト変換 ----------
     with tab_convert:
-        st.markdown("### ChatGPTなどのレシピテキストをMarkdown形式に変換")
-        st.caption("AIの回答・ブログ記事・メモなど、どんな形式のテキストでもOKです。Bedrockが自動でレシピ形式に整形します。")
+        # ---- URL からレシピを取得 ----
+        st.markdown("### 🌐 WebサイトのURLからレシピを取り込む")
+        st.caption("料理サイトのURLを貼り付けるだけで、レシピを自動抽出してMarkdown形式に変換します。")
+
+        url_input = st.text_input(
+            "レシピページのURL",
+            placeholder="例: https://www.kurashiru.com/recipes/xxxxx",
+            key="convert_url_input",
+        )
+
+        if st.button("🌐 URLから取り込む", type="primary", use_container_width=True, key="btn_url_convert"):
+            if not url_input.strip():
+                st.error("URLを入力してください")
+            elif not url_input.strip().startswith(("http://", "https://")):
+                st.error("http または https から始まるURLを入力してください")
+            else:
+                with st.spinner("Webページを取得してBedrockがレシピを抽出中...（15〜30秒）"):
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/recipes/extract-from-url",
+                            json={"url": url_input.strip()},
+                            timeout=90,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        st.session_state["converted_markdown"] = data["markdown"]
+                        st.session_state["converted_title"] = data["suggested_title"]
+                        st.session_state["converted_filename"] = data["suggested_filename"]
+                        st.session_state["converted_source_url"] = data["source_url"]
+                        st.success("取り込み完了！内容を確認・編集してから保存してください。")
+                    except requests.exceptions.ConnectionError:
+                        st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
+                    except requests.exceptions.HTTPError as e:
+                        detail = ""
+                        try:
+                            detail = e.response.json().get("detail", "")
+                        except Exception:
+                            pass
+                        st.error(f"取り込みエラー: {detail or str(e)}")
+                    except Exception as e:
+                        st.error(f"エラー: {str(e)}")
+
+        st.markdown("---")
+
+        # ---- テキストを貼り付けて変換 ----
+        st.markdown("### 📋 テキストを貼り付けてMarkdown形式に変換")
+        st.caption("ChatGPTの回答・ブログ記事・メモなど、どんな形式のテキストでもOKです。Bedrockが自動でレシピ形式に整形します。")
 
         raw_text = st.text_area(
             "変換したいテキストを貼り付けてください",
@@ -493,6 +538,7 @@ elif mode == "📖 レシピを追加":
                         st.session_state["converted_markdown"] = data["markdown"]
                         st.session_state["converted_title"] = data["suggested_title"]
                         st.session_state["converted_filename"] = data["suggested_filename"]
+                        st.session_state.pop("converted_source_url", None)
                         st.success("変換完了！内容を確認・編集してから保存してください。")
                     except requests.exceptions.ConnectionError:
                         st.error("バックエンドに接続できません。uvicornが起動しているか確認してください。")
@@ -502,6 +548,8 @@ elif mode == "📖 レシピを追加":
         if st.session_state.get("converted_markdown"):
             st.markdown("---")
             st.markdown("### 変換結果")
+            if st.session_state.get("converted_source_url"):
+                st.caption(f"取得元: {st.session_state['converted_source_url']}")
 
             # PC: 2カラム / モバイル: CSS で縦積みに
             col_l, col_r = st.columns([1, 1])
@@ -564,6 +612,7 @@ elif mode == "📖 レシピを追加":
                                 st.session_state.pop("converted_markdown", None)
                                 st.session_state.pop("converted_title", None)
                                 st.session_state.pop("converted_filename", None)
+                                st.session_state.pop("converted_source_url", None)
                                 st.session_state.pop("conv_image_b64", None)
                                 st.session_state.pop("conv_image_ext", None)
                             else:
