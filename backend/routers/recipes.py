@@ -45,6 +45,17 @@ class RecipeConvertResponse(BaseModel):
     suggested_filename: str
 
 
+class RecipeExtractFromUrlRequest(BaseModel):
+    url: str
+
+
+class RecipeExtractFromUrlResponse(BaseModel):
+    markdown: str
+    suggested_title: str
+    suggested_filename: str
+    source_url: str
+
+
 class RecipeUploadRequest(BaseModel):
     filename: str
     title: str
@@ -285,6 +296,46 @@ def _generate_image_with_bedrock(recipe_title: str, recipe_content: str) -> tupl
     return image_bytes, "image/jpeg"
 
 
+def _fetch_recipe_text_from_url(url: str) -> str:
+    """
+    URLのWebページからレシピ本文テキストを抽出する。
+    trafilaturaでメイン記事テキストを取得し、失敗時はBeautifulSoup4でフォールバック。
+    """
+    import urllib.request
+    import trafilatura
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    }
+
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        html_bytes = resp.read()
+
+    # trafilatura でメイン本文を抽出（最も精度が高い）
+    text = trafilatura.extract(
+        html_bytes,
+        include_tables=True,
+        include_comments=False,
+        favor_recall=True,
+    )
+
+    if text and len(text.strip()) > 100:
+        return text.strip()
+
+    # フォールバック: BeautifulSoup でスクリプト/スタイルを除去してテキスト化
+    soup = BeautifulSoup(html_bytes, "lxml")
+    for tag in soup(["script", "style", "header", "footer", "nav", "aside"]):
+        tag.decompose()
+    fallback = soup.get_text(separator="\n", strip=True)
+    return fallback[:8000]  # Bedrock のトークン上限を考慮してトリム
+
+
 def _rebuild_index() -> bool:
     """
     build_index.py をサブプロセスで実行してFAISSインデックスを再構築する。
@@ -318,6 +369,41 @@ async def convert_recipe(request: RecipeConvertRequest):
         return _convert_with_bedrock(request.raw_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bedrock変換エラー: {e}")
+
+
+@router.post("/extract-from-url", response_model=RecipeExtractFromUrlResponse)
+async def extract_recipe_from_url(request: RecipeExtractFromUrlRequest):
+    """
+    WebサイトのURLを受け取り、ページ本文からレシピを抽出してMarkdown形式に変換する。
+    1. URLのHTMLを取得してテキストを抽出（trafilatura優先、BSフォールバック）
+    2. 抽出テキストを _convert_with_bedrock() でMarkdownレシピに整形
+    変換結果のプレビュー・編集後に /upload で保存する想定。
+    """
+    url = request.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url が空です")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="http または https から始まるURLを入力してください")
+
+    try:
+        raw_text = _fetch_recipe_text_from_url(url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"URLの取得・テキスト抽出に失敗しました: {e}")
+
+    if not raw_text or len(raw_text.strip()) < 50:
+        raise HTTPException(status_code=422, detail="ページからテキストを抽出できませんでした。URLを確認してください。")
+
+    try:
+        result = _convert_with_bedrock(raw_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bedrock変換エラー: {e}")
+
+    return RecipeExtractFromUrlResponse(
+        markdown=result.markdown,
+        suggested_title=result.suggested_title,
+        suggested_filename=result.suggested_filename,
+        source_url=url,
+    )
 
 
 @router.post("/generate-image", response_model=GenerateImageResponse)
