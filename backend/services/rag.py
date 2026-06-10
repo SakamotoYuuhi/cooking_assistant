@@ -37,9 +37,14 @@ def reload_index():
     _metadata = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
 
 
+MIN_SCORE_THRESHOLD = 0.3  # コサイン類似度のしきい値（0〜1）
+
+
 def search_recipes(query: str, top_k: int = 3) -> List[dict]:
     """
     クエリに意味的に近いレシピをFAISSで検索して返す。
+    IndexFlatIP + normalize=True なのでスコアはコサイン類似度（0〜1）。
+    MIN_SCORE_THRESHOLD 未満のヒットは除外してエージェントの誤生成を防ぐ。
 
     Returns:
         [{"title": ..., "content": ..., "score": ...}, ...]
@@ -52,6 +57,8 @@ def search_recipes(query: str, top_k: int = 3) -> List[dict]:
     results = []
     for score, idx in zip(scores[0], indices[0]):
         if idx == -1:
+            continue
+        if float(score) < MIN_SCORE_THRESHOLD:
             continue
         meta = _metadata[idx]
         results.append({
